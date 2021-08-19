@@ -14,6 +14,7 @@ BAUD_RATE = 115200
 WIRED_MAX_DEVICE = 10
 PORT = "/dev/ttyUSB0"
 WIRED_FIRMWARE_MAX_RETRY_FOR_ONE_PACKET = 5
+debug__ = False
 
 class SMCom_version():
     def __init__(self, major, minor, patch):
@@ -523,10 +524,38 @@ class Wired(SMComPy.SMCOM_PUBLIC):
                     break
         
     def find_free_id(self):
-        for i in range(1, 14):
+        for i in range(0, 10):
             if i not in self.device_set.values():
                 return i
         return self.device_set.size()
+
+    def integrity_check(self):
+        if debug__ : print(f"Integrity check for {len(self.device_set)} devices")
+        for i in self.device_set:
+            device = self.device_set[i]
+            mac_adr = i.split(':')
+            mac_adr = [int(i, base = 16) for i in mac_adr]
+            wired_id = device.user_defined_id
+            for _ in range(5):
+                write_ret = self.write(wired_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INTEGRITY_CHECK.value, mac_adr, len(mac_adr))
+                if write_ret == SMComPy.SMCOM_STATUS_SUCCESS:
+                    try:
+                        read_ret = self.data_queue.get(timeout = 1.5)
+                        if read_ret.data != mac_adr:
+                            print("Unexpected mac!")
+                            continue
+                        break
+                    except queue.Empty:
+                        if debug__: print(f"Erasing device with id {device.user_defined_id}, mac : {i}")
+                        self.assign_new_id(i, 14)
+                        time.sleep(.01)
+                        self.device_set.pop(i)
+
+    def device_check(self):
+        self.integrity_check()
+        if len(self.device_set) == WIRED_MAX_DEVICE:
+            return WIRED_MESSAGE_STATUS.SUCCESS
+        self.scan()
 
     MESSAGES_SENSEWAY_WIRED = [
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
