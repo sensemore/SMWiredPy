@@ -10,5 +10,7 @@ src/SMCom.h.gch
 wiredTemp.cpp
 .bin
 
-SMComPy.egg-info
-dist/
+/SMComPy.egg-info
+/dist
+
+/secret
