@@ -11,8 +11,33 @@ from argparse import ArgumentParser
 import SMComPy
 
 BAUD_RATE = 115200
+WIRED_MAX_DEVICE = 10
 PORT = "/dev/ttyUSB0"
 WIRED_FIRMWARE_MAX_RETRY_FOR_ONE_PACKET = 5
+debug__ = False
+
+class SMCom_version():
+    def __init__(self, major, minor, patch):
+        self.major = int(major)
+        self.minor = int(minor)
+        self.patch = int(patch)
+    
+    def __le__(self, other):
+        self_ver = 10000 * self.major + 100 * self.minor + self.patch
+        other_ver = 10000 * other.major + 100 * other.minor + other.patch
+        return self_ver <= other_ver        
+
+    def __repr__(self):
+        return f"{self.major}.{self.minor}.{self.patch}"
+
+class Wired_device():
+    def __init__(self, id, version):
+        self.user_defined_id = id
+        if isinstance(version, str):
+            major, minor, patch = version.split('.')
+        else:
+            patch, minor, major = version
+        self.version = SMCom_version(major, minor, patch)
 
 class SMCOM_WIRED_MESSAGES(Enum):
     #------------- Bootloader Messages ---------------- 
@@ -61,7 +86,7 @@ sampling_frequency_dict = {
     "12800":9
 }
 
-class PySMComPyPacket:
+class PySMComPacket:
     data_len = 0			    
     receiver_id = 0		    
     transmitter_id = 0
@@ -105,9 +130,9 @@ class Wired(SMComPy.SMCOM_PUBLIC):
         self.listener_thread = threading.Thread(target=self.__thread_func__, daemon=True)
         self.listener_thread.start()
         time.sleep(1)
-
-        self.mac_address = self.get_mac_address(255)
-        self.version = self.get_version(255)
+        self.device_set = {}
+        # self.mac_address = self.get_mac_address(255)
+        # self.version = self.get_version(255)
 
     def __thread_func__(self):
         while self.continue_thread:
@@ -142,7 +167,7 @@ class Wired(SMComPy.SMCOM_PUBLIC):
         if(status != SMComPy.SMCOM_STATUS_SUCCESS):
             print("Error occured!")
             return
-        temp_packet = PySMComPyPacket()
+        temp_packet = PySMComPacket()
         temp_packet.data = packet.data
         temp_packet.message_id = packet.message_id			   
         temp_packet.receiver_id = packet.receiver_id		 
@@ -165,7 +190,7 @@ class Wired(SMComPy.SMCOM_PUBLIC):
 
     def __read__(self, length):
         buffer = []
-        pair = SMComPy.SMComPy_Pair()
+        pair = SMComPy.SMCom_Pair()
         temp = []
         if(self.mutex.acquire(blocking=True,timeout=self.mutex_timeout)):
             temp = self.ser.read(length)
@@ -227,7 +252,8 @@ class Wired(SMComPy.SMCOM_PUBLIC):
         for i in range(len(mac_address)):
             mac_address[i] = int(mac_address[i], base = 16)
         data.extend(mac_address)
-        self.write(255, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_SET_NEW_ID, data, len(data))
+        write_ret = self.write(255, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_SET_NEW_ID.value, data, len(data))
+        return write_ret
     
     def start_batch_measurement(self, id, acc, freq, sample_size, notify_measurement_end = True):
         if(sample_size <= 0 or sample_size >= 1000000 or (str(freq) not in sampling_frequency_dict.keys()) or (str(acc) not in acc_range_dict.keys()) ):
@@ -321,7 +347,7 @@ class Wired(SMComPy.SMCOM_PUBLIC):
                     convert_byte_list_to_double(bl[start+16:start+24])]
             start += 8
             return dl
-        major, minor, patch = self.version.split('.')
+        major, minor, patch = self.get_version(id).split('.')
         
         clearance = byte_list_to_double_list(telemetries)
         crest = byte_list_to_double_list(telemetries)
@@ -452,6 +478,85 @@ class Wired(SMComPy.SMCOM_PUBLIC):
         finally:
             self.ser.baudrate = 115200
     
+    def scan(self, max_retry = 10):
+        max_device = WIRED_MAX_DEVICE
+        device_count = 0
+        delay_offset = 150
+        channel_delay = 100
+
+        msg_start_adr = 14
+        if len(self.device_set) == 0:
+            msg_start_adr = 15
+        
+        retry = 0
+        for retry in range(max_retry):
+            device_count = 2*(max_device - len(self.device_set))
+            wait_time = (device_count * channel_delay) + delay_offset
+            wired_id = 14 if retry != 0 else msg_start_adr
+            ret = SMComPy.SMCOM_STATUS_DEFAULT
+            msg_data = [*tuple(device_count.to_bytes(1, "little")), *tuple(delay_offset.to_bytes(2, "little")), *tuple(channel_delay.to_bytes(2, "little"))]
+            for _ in range(10):
+                write_ret = self.write(wired_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INIT.value, msg_data, len(msg_data))
+                if write_ret == SMComPy.SMCOM_STATUS_SUCCESS or write_ret == SMComPy.SMCOM_STATUS_PORT_BUSY:
+                    break
+            if write_ret == SMComPy.SMCOM_STATUS_PORT_BUSY:
+                pass
+
+            time.sleep(wait_time/1000)
+
+            while True:
+                try:
+                    packet:PySMComPacket = self.data_queue.get(timeout = wait_time/1000)
+                    if packet.message_id != SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INIT.value:
+                        break
+                    incoming_data = packet.data
+
+                    mac_adr = incoming_data[:6]
+                    mac_adr = "%02X:%02X:%02X:%02X:%02X:%02X"%tuple(mac_adr)
+                    version = incoming_data[6:]
+                    id = self.find_free_id()
+                    temp_device = Wired_device(id, version)
+                    self.device_set[mac_adr] = temp_device
+                    write_ret = self.assign_new_id(mac_adr, id)
+                    return write_ret
+
+                except queue.Empty:
+                    break
+        
+    def find_free_id(self):
+        for i in range(0, 10):
+            if i not in self.device_set.values():
+                return i
+        return self.device_set.size()
+
+    def integrity_check(self):
+        if debug__ : print(f"Integrity check for {len(self.device_set)} devices")
+        for i in self.device_set:
+            device = self.device_set[i]
+            mac_adr = i.split(':')
+            mac_adr = [int(i, base = 16) for i in mac_adr]
+            wired_id = device.user_defined_id
+            for _ in range(5):
+                write_ret = self.write(wired_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INTEGRITY_CHECK.value, mac_adr, len(mac_adr))
+                if write_ret == SMComPy.SMCOM_STATUS_SUCCESS:
+                    try:
+                        read_ret = self.data_queue.get(timeout = 1.5)
+                        if read_ret.data != mac_adr:
+                            print("Unexpected mac!")
+                            continue
+                        break
+                    except queue.Empty:
+                        if debug__: print(f"Erasing device with id {device.user_defined_id}, mac : {i}")
+                        self.assign_new_id(i, 14)
+                        time.sleep(.01)
+                        self.device_set.pop(i)
+
+    def device_check(self):
+        self.integrity_check()
+        if len(self.device_set) == WIRED_MAX_DEVICE:
+            return WIRED_MESSAGE_STATUS.SUCCESS
+        self.scan()
+
     MESSAGES_SENSEWAY_WIRED = [
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
         ("GET_VERSION",                     get_version),

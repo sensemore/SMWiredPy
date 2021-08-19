@@ -1,14 +1,7 @@
-/build
-/__pycache__
-*.pyc
-/.vscode
-src/SMCom.cpython-38-x86_64-linux-gnu.so
-wrapping.code-workspace
-src/SMCom.h.gch
-*.so
-*.out
-wiredTemp.cpp
-.bin
+*.h
+*.cpp
+src/__pycache__
+src/example_usage.py
 
 /SMComPy.egg-info
 /dist
