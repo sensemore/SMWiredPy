@@ -3,4 +3,7 @@
 src/__pycache__
 src/example_usage.py
 
-*py
+/SMComPy.egg-info
+/dist
+
+/secret
