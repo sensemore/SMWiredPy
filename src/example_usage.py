@@ -4,11 +4,11 @@ import time
 dev = Wired()
 time.sleep(1)
 
-ver = dev.get_version(255)
-print("Got version:",ver)
+#ver = dev.get_version(255)
+#print("Got version:",ver)
 print("-"*60)
-mac = dev.get_mac_address(255)
-print("Got mac:",mac)
+#mac = dev.get_mac_address(255)
+#print("Got mac:",mac)
 print("="*60)
 # sample = 1000
 # # dev.start_batch_measurement(0xFF,"16G",12800,sample)

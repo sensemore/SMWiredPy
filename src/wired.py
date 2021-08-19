@@ -131,8 +131,7 @@ class Wired(SMComPy.SMCOM_PUBLIC):
         self.listener_thread.start()
         time.sleep(1)
         self.device_set = {}
-        # self.mac_address = self.get_mac_address(255)
-        # self.version = self.get_version(255)
+        self.id_list = []
 
     def __thread_func__(self):
         while self.continue_thread:
@@ -215,7 +214,7 @@ class Wired(SMComPy.SMCOM_PUBLIC):
             return write_ret
         packet = self.data_queue.get(timeout = timeout)
         SMComPy_version = packet.data
-        rec_id = packet.receiver_id
+        # rec_id = packet.receiver_id
         # print(rec_id)
         # if rec_id != id:
         #     return SMComPy.SMCOM_STATUS_FAIL
@@ -379,7 +378,7 @@ class Wired(SMComPy.SMCOM_PUBLIC):
 
         return telems
 
-    def firmware_update(self, mac, bin_file_address, receiver_id = 255, timeout = 10):
+    def firmware_update(self, mac, bin_file_address, receiver_id, timeout = 10):
         """
         Takes receiver_id, mac_address, address of binary file, and timeout(default 10) and return SMComPy_Status_t 
         or WIRED_MESSAGE_STATUS type as int.
@@ -472,7 +471,7 @@ class Wired(SMComPy.SMCOM_PUBLIC):
                 return SMComPy.SMCOM_STATUS_FAIL
             time.sleep(12)
             self.ser.baudrate = 115200
-            print("Firmware Updated to version:", self.get_version(255))
+            print("Firmware Updated to version:", self.get_version(receiver_id))
         except:
             print("An error occurred while firmware update")
         finally:
@@ -502,11 +501,9 @@ class Wired(SMComPy.SMCOM_PUBLIC):
             if write_ret == SMComPy.SMCOM_STATUS_PORT_BUSY:
                 pass
 
-            time.sleep(wait_time/1000)
-
             while True:
                 try:
-                    packet:PySMComPacket = self.data_queue.get(timeout = wait_time/1000)
+                    packet = self.data_queue.get(timeout = wait_time/1000)
                     if packet.message_id != SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INIT.value:
                         break
                     incoming_data = packet.data
@@ -515,41 +512,55 @@ class Wired(SMComPy.SMCOM_PUBLIC):
                     mac_adr = "%02X:%02X:%02X:%02X:%02X:%02X"%tuple(mac_adr)
                     version = incoming_data[6:]
                     id = self.find_free_id()
+                    self.id_list.append(id)
                     temp_device = Wired_device(id, version)
                     self.device_set[mac_adr] = temp_device
                     write_ret = self.assign_new_id(mac_adr, id)
-                    return write_ret
+                    if SMComPy.SMCOM_STATUS_SUCCESS:
+                        break
 
                 except queue.Empty:
-                    break
+                    print("Devices scanned successfully...")
+                    return
         
     def find_free_id(self):
         for i in range(0, 10):
-            if i not in self.device_set.values():
+            # id_list = []
+            # for j in self.device_set.values():
+            #     id_list.append(j.user_defined_id)
+            if i not in self.id_list:
                 return i
         return self.device_set.size()
 
     def integrity_check(self):
         if debug__ : print(f"Integrity check for {len(self.device_set)} devices")
+        del_list = []
         for i in self.device_set:
             device = self.device_set[i]
             mac_adr = i.split(':')
-            mac_adr = [int(i, base = 16) for i in mac_adr]
-            wired_id = device.user_defined_id
-            for _ in range(5):
-                write_ret = self.write(wired_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INTEGRITY_CHECK.value, mac_adr, len(mac_adr))
+            mac_adr = [int(k, base = 16) for k in mac_adr]
+            j = 0
+            while True:
+                write_ret = self.write(device.user_defined_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INTEGRITY_CHECK.value, mac_adr, len(mac_adr))
                 if write_ret == SMComPy.SMCOM_STATUS_SUCCESS:
                     try:
-                        read_ret = self.data_queue.get(timeout = 1.5)
+                        read_ret = self.data_queue.get(timeout = 1)
                         if read_ret.data != mac_adr:
                             print("Unexpected mac!")
+                            j += 1
                             continue
                         break
                     except queue.Empty:
-                        if debug__: print(f"Erasing device with id {device.user_defined_id}, mac : {i}")
-                        self.assign_new_id(i, 14)
-                        time.sleep(.01)
-                        self.device_set.pop(i)
+                        j += 1
+                        if j >= 5:
+                            if debug__: print(f"Erasing device with id {device.user_defined_id}, mac : {i}")
+                            self.assign_new_id(i, 14)
+                            time.sleep(.01)
+                            del_list.append(i) 
+                            break
+        for i in del_list:
+            deleted = self.device_set.pop(i)
+            self.id_list.remove(deleted.user_defined_id)
 
     def device_check(self):
         self.integrity_check()
