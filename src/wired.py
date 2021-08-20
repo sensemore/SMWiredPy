@@ -9,7 +9,6 @@ from argparse import ArgumentParser
 
 #Before importing SMComPy check the .so or .dll file!
 import SMComPy
-
 BAUD_RATE = 115200
 WIRED_MAX_DEVICE = 10
 PORT = "/dev/ttyUSB0"
@@ -210,7 +209,7 @@ class Wired(SMComPy.SMCOM_PUBLIC):
         in format (MAJOR.MINOR.PATCH)(Ex. 1.0.12) with given id (15 or 255 are reserved as public id)
         """
         write_ret = self.write(id, SMCOM_WIRED_MESSAGES.GET_VERSION.value, [], 0)
-        if(write_ret != SMComPy.SMCOM_STATUS_SUCCESS):
+        if write_ret != SMComPy.SMCOM_STATUS_SUCCESS:
             return write_ret
         packet = self.data_queue.get(timeout = timeout)
         SMComPy_version = packet.data
@@ -385,7 +384,6 @@ class Wired(SMComPy.SMCOM_PUBLIC):
         """
         bin_file = open(bin_file_address, "rb")
         packets = []
-
         while True:
             temp = bin_file.read(240)
             if temp == b'':
@@ -469,10 +467,18 @@ class Wired(SMComPy.SMCOM_PUBLIC):
             end_mac_return = resp_end[1:]
             if mac != end_mac_return or read_ret != WIRED_MESSAGE_STATUS.SUCCESS.value:
                 return SMComPy.SMCOM_STATUS_FAIL
-            time.sleep(12)
             self.ser.baudrate = 115200
+            time.sleep(12)
+            time.sleep(.5)
+            self.device_check()
+            time.sleep(1)
+            
+            mac_str = "%02X:%02X:%02X:%02X:%02X:%02X"%tuple(mac)
+            
+            receiver_id = self.device_set[mac_str].user_defined_id
             print("Firmware Updated to version:", self.get_version(receiver_id))
-        except:
+        except Exception as e:
+            print(e)
             print("An error occurred while firmware update")
         finally:
             self.ser.baudrate = 115200
@@ -483,9 +489,7 @@ class Wired(SMComPy.SMCOM_PUBLIC):
         delay_offset = 150
         channel_delay = 100
 
-        msg_start_adr = 14
-        if len(self.device_set) == 0:
-            msg_start_adr = 15
+        msg_start_adr = 15 if len(self.device_set) == 0 else 14
         
         retry = 0
         for retry in range(max_retry):
@@ -495,10 +499,10 @@ class Wired(SMComPy.SMCOM_PUBLIC):
             ret = SMComPy.SMCOM_STATUS_DEFAULT
             msg_data = [*tuple(device_count.to_bytes(1, "little")), *tuple(delay_offset.to_bytes(2, "little")), *tuple(channel_delay.to_bytes(2, "little"))]
             for _ in range(10):
-                write_ret = self.write(wired_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INIT.value, msg_data, len(msg_data))
-                if write_ret == SMComPy.SMCOM_STATUS_SUCCESS or write_ret == SMComPy.SMCOM_STATUS_PORT_BUSY:
+                ret = self.write(wired_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INIT.value, msg_data, len(msg_data))
+                if ret == SMComPy.SMCOM_STATUS_SUCCESS or ret == SMComPy.SMCOM_STATUS_PORT_BUSY:
                     break
-            if write_ret == SMComPy.SMCOM_STATUS_PORT_BUSY:
+            if ret == SMComPy.SMCOM_STATUS_PORT_BUSY:
                 pass
 
             while True:
@@ -512,22 +516,18 @@ class Wired(SMComPy.SMCOM_PUBLIC):
                     mac_adr = "%02X:%02X:%02X:%02X:%02X:%02X"%tuple(mac_adr)
                     version = incoming_data[6:]
                     id = self.find_free_id()
-                    self.id_list.append(id)
                     temp_device = Wired_device(id, version)
                     self.device_set[mac_adr] = temp_device
-                    write_ret = self.assign_new_id(mac_adr, id)
-                    if SMComPy.SMCOM_STATUS_SUCCESS:
+                    self.id_list.append(id)
+                    ret = self.assign_new_id(mac_adr, id)
+                    if ret == SMComPy.SMCOM_STATUS_SUCCESS:
                         break
 
                 except queue.Empty:
-                    print("Devices scanned successfully...")
                     return
         
     def find_free_id(self):
         for i in range(0, 10):
-            # id_list = []
-            # for j in self.device_set.values():
-            #     id_list.append(j.user_defined_id)
             if i not in self.id_list:
                 return i
         return self.device_set.size()
@@ -539,20 +539,20 @@ class Wired(SMComPy.SMCOM_PUBLIC):
             device = self.device_set[i]
             mac_adr = i.split(':')
             mac_adr = [int(k, base = 16) for k in mac_adr]
-            j = 0
+            retry = 0
             while True:
                 write_ret = self.write(device.user_defined_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INTEGRITY_CHECK.value, mac_adr, len(mac_adr))
                 if write_ret == SMComPy.SMCOM_STATUS_SUCCESS:
                     try:
                         read_ret = self.data_queue.get(timeout = 1)
                         if read_ret.data != mac_adr:
-                            print("Unexpected mac!")
-                            j += 1
+                            if debug__: print("Unexpected mac!")
+                            retry += 1
                             continue
                         break
                     except queue.Empty:
-                        j += 1
-                        if j >= 5:
+                        retry += 1
+                        if retry >= 5:
                             if debug__: print(f"Erasing device with id {device.user_defined_id}, mac : {i}")
                             self.assign_new_id(i, 14)
                             time.sleep(.01)
@@ -562,11 +562,11 @@ class Wired(SMComPy.SMCOM_PUBLIC):
             deleted = self.device_set.pop(i)
             self.id_list.remove(deleted.user_defined_id)
 
-    def device_check(self):
+    def device_check(self, max_retry = 10):
         self.integrity_check()
         if len(self.device_set) == WIRED_MAX_DEVICE:
             return WIRED_MESSAGE_STATUS.SUCCESS
-        self.scan()
+        self.scan(max_retry = max_retry)
 
     MESSAGES_SENSEWAY_WIRED = [
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
@@ -581,7 +581,7 @@ class Wired(SMComPy.SMCOM_PUBLIC):
         ("GET_KURTOSIS",                    0),
         ("GET_SKEWNESS",                    0),
         ("GET_BATCH_MEASUREMENT_CHUNK",     0),
-        ("AUTO_ADDRESSING_INTEGRITY_CHECK", 0),
+        ("AUTO_ADDRESSING_INTEGRITY_CHECK", integrity_check),
         ("GET_ALL_TELEMETRY",               get_all_telemetry),
         ("GET_VRMS",                        0),
         ("GET_PEAK",                        0),
