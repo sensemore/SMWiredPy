@@ -1,9 +1,10 @@
 *.h
 *.cpp
 src/__pycache__
+__pycache__
 src/example_usage.py
 
-/SMComPy.egg-info
+*.egg-info
 /dist
 
 /secret
