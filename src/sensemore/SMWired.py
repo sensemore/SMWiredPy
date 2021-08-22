@@ -10,7 +10,6 @@ from argparse import ArgumentParser
 
 #Before importing SMComPy check the .so or .dll file!
 import SMComPy
-
 BAUD_RATE = 115200
 WIRED_MAX_DEVICE = 10
 PORT = "/dev/ttyUSB0"
@@ -235,11 +234,11 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
         """
         id = self.device_map[mac].user_defined_id
         write_ret = self.write(id, SMCOM_WIRED_MESSAGES.GET_VERSION.value, [], 0)
-        if(write_ret != SMComPy.SMCOM_STATUS_SUCCESS):
+        if write_ret != SMComPy.SMCOM_STATUS_SUCCESS:
             return write_ret
         packet = self.data_queue.get(timeout = timeout)
         SMComPy_version = packet.data
-        rec_id = packet.receiver_id
+        # rec_id = packet.receiver_id
         # print(rec_id)
         # if rec_id != id:
         #     return SMComPy.SMCOM_STATUS_FAIL
@@ -407,14 +406,13 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 
         return telems
 
-    def firmware_update(self, mac, bin_file_address, receiver_id = 255, timeout = 10):
+    def firmware_update(self, mac, bin_file_address, receiver_id, timeout = 10):
         """
         Takes receiver_id, mac_address, address of binary file, and timeout(default 10) and return SMComPy_Status_t 
         or WIRED_MESSAGE_STATUS type as int.
         """
         bin_file = open(bin_file_address, "rb")
         packets = []
-
         while True:
             temp = bin_file.read(240)
             if temp == b'':
@@ -498,10 +496,18 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
             end_mac_return = resp_end[1:]
             if mac != end_mac_return or read_ret != WIRED_MESSAGE_STATUS.SUCCESS.value:
                 return SMComPy.SMCOM_STATUS_FAIL
-            time.sleep(12)
             self.ser.baudrate = 115200
-            print("Firmware Updated to version:", self.get_version(255))
-        except:
+            time.sleep(12)
+            time.sleep(.5)
+            self.device_check()
+            time.sleep(1)
+            
+            mac_str = "%02X:%02X:%02X:%02X:%02X:%02X"%tuple(mac)
+            
+            receiver_id = self.device_set[mac_str].user_defined_id
+            print("Firmware Updated to version:", self.get_version(receiver_id))
+        except Exception as e:
+            print(e)
             print("An error occurred while firmware update")
         finally:
             self.ser.baudrate = 115200
@@ -544,7 +550,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
                 write_ret = self.write(wired_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INIT.value, msg_data, len(msg_data))
                 if write_ret == SMComPy.SMCOM_STATUS_SUCCESS or write_ret == SMComPy.SMCOM_STATUS_PORT_BUSY:
                     break
-            if write_ret == SMComPy.SMCOM_STATUS_PORT_BUSY:
+            if ret == SMComPy.SMCOM_STATUS_PORT_BUSY:
                 pass
             elif write_ret == SMComPy.SMCOM_STATUS_SUCCESS:
 	            pass
@@ -585,15 +591,16 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
         for i in self.device_map:
             device = self.device_map[i]
             mac_adr = i.split(':')
-            mac_adr = [int(i, base = 16) for i in mac_adr]
-            wired_id = device.user_defined_id
-            for _ in range(5):
-                write_ret = self.write(wired_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INTEGRITY_CHECK.value, mac_adr, len(mac_adr))
+            mac_adr = [int(k, base = 16) for k in mac_adr]
+            retry = 0
+            while True:
+                write_ret = self.write(device.user_defined_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INTEGRITY_CHECK.value, mac_adr, len(mac_adr))
                 if write_ret == SMComPy.SMCOM_STATUS_SUCCESS:
                     try:
-                        read_ret = self.data_queue.get(timeout = 1.5)
+                        read_ret = self.data_queue.get(timeout = 1)
                         if read_ret.data != mac_adr:
-                            print("Unexpected mac!")
+                            if debug__: print("Unexpected mac!")
+                            retry += 1
                             continue
                         break
                     except queue.Empty:
@@ -606,7 +613,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
         self.integrity_check()
         if len(self.device_map) == WIRED_MAX_DEVICE:
             return WIRED_MESSAGE_STATUS.SUCCESS
-        self.scan()
+        self.scan(max_retry = max_retry)
 
     def __del__(self):
         self.continue_thread = False
@@ -633,10 +640,10 @@ def parse_arg():
         exit()
 
     if argv[1] == 'update':
-        dev = Wired(port = data.port)
+        dev = SMWired(port = data.port)
         dev.firmware_update(dev.mac_address, data.binfile)
     elif argv[1] == 'measure':
-        dev = Wired(port = data.port)
+        dev = SMWired(port = data.port)
         meas = dev.measure(255, data.acc, data.freq, data.smpsize)
         ls = []
         for i in range(len(meas[0])*3):
