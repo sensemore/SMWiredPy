@@ -1,17 +1,32 @@
-from sensemore import SMWired as smw
-import time
+from sensemore import SMWired
 
-dev = smw.SMWired(port = "/dev/ttyUSB0")
+wired_network = SMWired.SMWired(port = "/dev/ttyUSB0", configure_network='auto')
+#Dump the list of found available devices
+print(wired_network.get_available_devices())
 
-# ver = dev.get_version(255)
-# print("Got version:",ver)
-# print("-"*60)
-# mac = dev.get_mac_address(255)
-# print("Got mac:",mac)
-# print("="*60)
-# sample = 1000
-# # dev.start_batch_measurement(0xFF,"16G",12800,sample)
-# print("#"*60)
-# # meas = dev.read_measurement(0xFF,sample)
-# meas = dev.measure(0xFF,"16G",12800,sample)
-# telems = dev.get_all_telemetry(0xFF)
+devices = wired_network.get_available_devices()
+
+#Print the version of the devices
+for device in devices:
+	print("Version of '%s' is %s"%(device,wired_network.get_version(device)))
+
+
+#Take measurement from a specific device in the network
+
+mac = 'CA:B8:31:00:00:55'
+accelerometer_range = "16G"
+sampling_frequency = 12800
+sample_size = 10000
+
+measurement_result = wired_network.measure(mac,accelerometer_range,sampling_frequency,sample_size)
+
+result_acc_x = measurement_result[0]
+result_acc_y = measurement_result[1]
+result_acc_z = measurement_result[2]
+
+"""
+Also there are telemetries calculated in wired, we can also take it by calling get_all_telemetry
+"""
+
+telemetries = wired_network.get_all_telemetry(mac)
+print(telemetries)
