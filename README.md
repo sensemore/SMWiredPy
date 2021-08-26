@@ -1,8 +1,11 @@
 # SMWiredPy
+[Sensemore](https://sensemore.io) - Wired vibration sensor Python interface 
 
-Sensemore Wired vibration sensor Python interface 
+![sm](img/sm.webp)
 
- ![Tux, the Linux mascot](img/wired_image.jpg)
+
+![Wired](img/wired.webp)
+
 
 ## Installing the library
 
@@ -83,9 +86,13 @@ print(telemetries)
 
 ## Command line interface
 
+
+- Updating the wired device via cli
 ```bash
-$ python SMWiredPy.py update --port=/dev/ttyUSB0 --mac=CA:B8:31:00:00:3C --file=Wiredv1_0_13.bin 
-
-$ python SMWiredPy.py measure --port=/dev/ttyUSB0 --mac=CA:B8:31:00:00:3C --sample=10 -t
-
+python -m sensemore.SMWiredPy update --port=/dev/ttyUSB0 --mac=CA:B8:31:00:00:3C --file=Wiredv1_0_13.bin 
 ```
+- Fast measurement via cli
+```
+python -m sensemore.SMWiredPy measure --port=/dev/ttyUSB0 --mac=CA:B8:31:00:00:3C --sample=1000 --freq=12800 -acc=16G -t
+```
+
