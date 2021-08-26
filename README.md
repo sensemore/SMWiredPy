@@ -79,3 +79,13 @@ print(telemetries)
 - 8G
 - 16G
 ```
+
+
+## Command line interface
+
+```bash
+$ python SMWiredPy.py update --port=/dev/ttyUSB0 --mac=CA:B8:31:00:00:3C --file=Wiredv1_0_13.bin 
+
+$ python SMWiredPy.py measure --port=/dev/ttyUSB0 --mac=CA:B8:31:00:00:3C --sample=10 -t
+
+```
