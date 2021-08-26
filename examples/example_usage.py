@@ -1,8 +1,10 @@
-from sensemore import SMWired
+from sensemore import SMWiredPy
 
-wired_network = SMWired.SMWired(port = "/dev/ttyUSB0", configure_network='auto')
+ls = ["CA:B8:31:00:00:55","CA:B8:31:00:00:3C"]
+
+wired_network = SMWiredPy.SMWired(port = "/dev/ttyUSB0", configure_network=ls, max_device_number=2)
 #Dump the list of found available devices
-print(wired_network.get_available_devices())
+print("Found available devices:",wired_network.get_available_devices())
 
 devices = wired_network.get_available_devices()
 
@@ -16,7 +18,7 @@ for device in devices:
 mac = 'CA:B8:31:00:00:55'
 accelerometer_range = "16G"
 sampling_frequency = 12800
-sample_size = 10000
+sample_size = 100
 
 measurement_result = wired_network.measure(mac,accelerometer_range,sampling_frequency,sample_size)
 

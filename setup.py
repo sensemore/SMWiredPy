@@ -13,8 +13,8 @@ with open("README.md", "r", encoding="utf-8") as f:
 
 
 setup(
-    name="SMWired",
-    version="0.0.10",
+    name="SMWiredPy",
+    version="0.0.11",
     author="sensemore",
 	author_email="hello@sensemore.io",
     url="https://www.sensemore.io",

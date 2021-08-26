@@ -31,13 +31,14 @@ class SMCom_version():
 		return f"{self.major}.{self.minor}.{self.patch}"
 
 class Wired():
-	def __init__(self, mac, version, id):
+	def __init__(self, mac, version, user_id):
 		self.mac = mac
-		self.user_defined_id = id
+		self.user_defined_id = user_id
 		if isinstance(version, str):
 			major, minor, patch = version.split('.')
 		else:
-			patch, minor, major = version
+			patch, minor, major = tuple(version)
+
 		self.version = SMCom_version(major, minor, patch)
 	
 	def __eq__(self,other):
@@ -108,7 +109,7 @@ sampling_frequency_dict = {
 	"12800":9
 }
 
-class PySMComPacket:
+class SMComPyPacket:
 	def __init__(self,smcom_cpp_packet):
 		self.data_len = smcom_cpp_packet.data_len
 		self.receiver_id = smcom_cpp_packet.receiver_id
@@ -133,7 +134,7 @@ class PySMComPacket:
 class SMWired(SMComPy.SMCOM_PUBLIC):
 	accelerometer_coefficients= [(2*2)/(1<<16), (2*2)/(1<<16), (4*2)/(1<<16), (8*2)/(1<<16), (16*2)/(1<<16)]
 
-	def __init__(self:SMWired, port:str = PORT, configure_network = 'auto'):
+	def __init__(self, port = PORT, configure_network = 'auto', max_device_number = WIRED_MAX_DEVICE):
 		"""
 			The global SMWired object opens an usb port and builds the network
 			if network parameter is set to 'auto', it tries to scan network automatically and finds available wired devices
@@ -141,9 +142,9 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 				later scan function can be called to find available devices
 			'SMWired.scan' function to communicate with the network
 		"""
-		self.device_id = 13 #master id defined by us never change it!
-		super().__init__(self.device_id)
-		self.transmitter_id = id
+		self.__master_id = 13 #master id defined by us never change it!
+		super().__init__(self.__master_id)
+		self.transmitter_id = self.__master_id
 		try:
 			self.ser = serial.Serial(port, BAUD_RATE)
 		except:
@@ -164,7 +165,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		self.device_map = {}
 
 		if(configure_network == 'auto'):
-			self.scan(WIRED_MAX_DEVICE)
+			self.scan(max_device_number)
 		if(isinstance(configure_network,list)):
 			self.___scan_wired_mac_list(configure_network)
 
@@ -202,6 +203,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			return SMComPy.SMCOM_STATUS_SUCCESS
 		else:
 			print("Got no mutex!")
+			exit()
 
 		return SMComPy.SMCOM_STATUS_TIMEOUT
 
@@ -213,7 +215,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			print("Error occured!")
 			self.ser.flush()
 			return
-		temp_packet = PySMComPacket(packet)
+		temp_packet = SMComPyPacket(packet) #Convert to python so we can have better interface
 		self.data_queue.put(temp_packet)
 
 	def __tx_callback__(self, event, status, packet):
@@ -230,8 +232,6 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		if(self.mutex.acquire(blocking=True,timeout=self.mutex_timeout)):
 			avlb = self.ser.inWaiting()
 			self.mutex.release()
-		else:
-			print("Got no mutex avlb!")
 		return avlb
 
 	def __read__(self, length):
@@ -243,14 +243,14 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			temp = self.ser.read(length)
 			self.mutex.release()
 
-		if(len(temp) > 0):
-			for i in temp:
-				buffer.append(i)
-			pair.vec = buffer
-			pair.status = SMComPy.SMCOM_STATUS_SUCCESS
-			return pair
-		else:
+		if(len(temp) == 0):
 			return None
+
+		for i in temp:
+			buffer.append(i)
+		pair.vec = buffer
+		pair.status = SMComPy.SMCOM_STATUS_SUCCESS
+		return pair
 
 	def __get_message(self,timeout):
 		"""
@@ -270,11 +270,12 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		for mac in ls:
 			mac_as_byte = [int(k, base = 16) for k in mac.split(':')]
 			user_defined_id = self.__find_available_id()
-			write_ret = self.__assign_new_id(mac, id)
+			write_ret = self.__assign_new_id(mac, user_defined_id)
 			if(write_ret !=  SMComPy.SMCOM_STATUS_SUCCESS):
 				print("USB port write problem")
 				return False
 
+			#This message changes the assigned id, use it with care!
 			write_ret = self.write(user_defined_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INIT.value, [0,0,0,0,0], 5)
 			if(write_ret !=  SMComPy.SMCOM_STATUS_SUCCESS):
 				print("USB port write problem")
@@ -283,44 +284,48 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			try:
 				packet = self.data_queue.get(timeout=3)
 				data = packet.data
-				inc_mac = tuple(data[:-3])
+				inc_mac = data[:-3]
 				inc_version = data[6:]
 				if(inc_mac != mac_as_byte):
 					print("Wrong id assigned to device!, integrity check failed")
 					continue
 				self.device_map[mac] = Wired(mac,inc_version,user_defined_id)
+				write_ret = self.__assign_new_id(mac, user_defined_id) # So device is on the entwork, assign it again
 			except queue.Empty:
-				#self.assign_new_id(i, 14)
-				#time.sleep(.01)
-				print("Removing device ",mac)
-				self.device_map.pop(mac)
+				print("No device found ",mac)
 				
 				#print("Cannot add device %s, not in the network or connection problem"%mac)
 
-
-	def get_version(self, mac, timeout = 3):
+	def get_version(self:object, mac:str, timeout:int = 3):
 		"""
 		Takes mac address of the device and returns its version in format (MAJOR.MINOR.PATCH)(Ex. 1.0.12)
 		If cannot communicate via device, returns None
 		"""
-		id = self.device_map[mac].user_defined_id
-		write_ret = self.write(id, SMCOM_WIRED_MESSAGES.GET_VERSION.value, [], 0)
+
+		if(isinstance(mac,str) == False):
+			print("Arg error")
+			return None
+
+		user_defined_id = self.device_map[mac].user_defined_id
+		write_ret = self.write(user_defined_id, SMCOM_WIRED_MESSAGES.GET_VERSION.value, [], 0)
 		if write_ret != SMComPy.SMCOM_STATUS_SUCCESS:
-			return write_ret
+			return None
 		packet = self.__get_message(timeout=timeout)
+		
 		if(packet == None):
 			return None
+
 		SMComPy_version = packet.data
 		version = f"{SMComPy_version[2]}.{SMComPy_version[1]}.{SMComPy_version[0]}"
 		return version
 	
-	def __get_mac_address(self, id, timeout = 3):
+	def __get_mac_address(self, device_id, timeout = 3):
 		"""
 		Takes receiver id as argument and returns mac address of the device with given id as string in format
 		(XX:XX:XX:XX:XX:XX) (15 or 255 are reserved as public id).
 		Not available for users, only used for development
 		"""
-		write_ret = self.write(id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INIT.value, [0,0,0,0,0], 5)
+		write_ret = self.write(device_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INIT.value, [0,0,0,0,0], 5)
 		if write_ret != SMComPy.SMCOM_STATUS_SUCCESS:
 			return write_ret
 
@@ -330,17 +335,14 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		data = tuple(data[:-3])
 		return "%02X:%02X:%02X:%02X:%02X:%02X"%data
 
-	def __assign_new_id(self, mac_address, id):
+	def __assign_new_id(self, mac_address, user_id):
 		"""
 		Takes mac adress and id to be assigned to the given mac address as arguments assigns the 
 		receiver id to the device which has mac address same as given and return None.
 		"""
-		data = []
-		data.append(id)
-		mac_address = mac_address.split(':')
-		for i in range(len(mac_address)):
-			mac_address[i] = int(mac_address[i], base = 16)
-		data.extend(mac_address)
+		if(type(mac_address) == str):
+			mac_address = [int(x, base = 16) for x in mac_address.split(':')]
+		data = [user_id,*mac_address]
 		write_ret = self.write(SMComPy.PUBLIC_ID_4BIT.value, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_SET_NEW_ID.value, data, len(data))
 		return write_ret
 	
@@ -349,7 +351,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			#Return arg error here
 			return None
 		
-		id = self.device_map[mac].user_defined_id
+		device_id = self.device_map[mac].user_defined_id
 		#Check the dictionaries
 		acc_index = acc_range_dict[acc]
 		freq_index = sampling_frequency_dict[str(freq)]
@@ -357,13 +359,12 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		data = [acc_index,freq_index,*tuple(sample_size.to_bytes(4, "little")), notify_measurement_end]
 
 		#Check write!
-		self.write(id, SMCOM_WIRED_MESSAGES.START_BATCH_MEASUREMENT.value, data, len(data))
+		self.write(device_id, SMCOM_WIRED_MESSAGES.START_BATCH_MEASUREMENT.value, data, len(data))
 
 		if(notify_measurement_end):
 			#calculate end amount and give also additional time
 			expected_timeout = sample_size/freq + (sample_size*1)
 			data_packet = self.data_queue.get(timeout = expected_timeout)
-			print(data_packet.data[0])
 			return (data_packet.data[0] == WIRED_MESSAGE_STATUS.SUCCESS.value)
 		
 		return True
@@ -373,11 +374,11 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		byte_offset = 0 # Start from the beginning
 		data_len = sample_size * 6 #Convert to bytes
 
-		id = self.device_map[mac].user_defined_id
+		device_id = self.device_map[mac].user_defined_id
 		data = [*tuple(byte_offset.to_bytes(4, "little")),*tuple(data_len.to_bytes(4, "little"))]
 
 		#Check write!
-		self.write(id, SMCOM_WIRED_MESSAGES.GET_BATCH_MEASUREMENT_CHUNK.value, data, len(data))
+		self.write(device_id, SMCOM_WIRED_MESSAGES.GET_BATCH_MEASUREMENT_CHUNK.value, data, len(data))
 
 		measurement_data = [[0]*sample_size,[0]*sample_size,[0]*sample_size]
 		raw_measurement_data = []
@@ -418,11 +419,31 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			return None
 	
 	def get_all_telemetry(self, mac, timeout = 30):
-		id = self.device_map[mac].user_defined_id
+		device_id = self.device_map[mac].user_defined_id
 		#Check write!
-		self.write(id, SMCOM_WIRED_MESSAGES.GET_ALL_TELEMETRY.value, [], 0)
+		self.write(device_id, SMCOM_WIRED_MESSAGES.GET_ALL_TELEMETRY.value, [], 0)
 		#Check also queue data receiver id!, maybe not desired message
 		data = self.data_queue.get(timeout = timeout).data
+		
+		"""
+			Telemetry message response :
+				typedef struct resp_get_all_telemetry{
+					STATUS_SENSEWAY_WIRED status;
+					uint16_t temperature;
+					uint32_t frequency_calibration;
+					double clearance[3];
+					double crest[3];
+					double grms[3];
+					double kurtosis[3];
+					double skewness[3];
+					//Included in v1.0.9
+					double vrms[3];
+					double peak[3];
+					double sum[3];
+					//Included in v1.0.13
+					double peak_to_peak[3];
+				}__attribute__((packed)) resp_get_all_telemetry;	
+		"""
 		status = data[0]
 		temperature = int.from_bytes(data[1:3],"little",signed=False)
 		calibrated_frequency = int.from_bytes(data[3:7],"little",signed=False)
@@ -432,21 +453,20 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		def convert_byte_list_to_double(bl):
 			return struct.unpack('d',bytes(bl))[0]
 
-		start = 0
-		def byte_list_to_double_list(bl):
-			nonlocal start
-			dl = [  convert_byte_list_to_double(bl[start:start+8]),
-					convert_byte_list_to_double(bl[start+8:start+16]),
-					convert_byte_list_to_double(bl[start+16:start+24])]
-			start += 8
-			return dl
-		major, minor, patch = self.get_version(id).split('.')
+		def byte_list_to_double_list(bl,index):
+			#index must be integer order 0,1,2,3 etc
+			i = index*24
+			return [convert_byte_list_to_double(bl[i:i+8]),
+					convert_byte_list_to_double(bl[i+8:i+16]),
+					convert_byte_list_to_double(bl[i+16:i+24])]
+			
+		dev_version = self.device_map[mac].version
 		
-		clearance = byte_list_to_double_list(telemetries)
-		crest = byte_list_to_double_list(telemetries)
-		grms = byte_list_to_double_list(telemetries)
-		kurtosis = byte_list_to_double_list(telemetries)
-		skewness = byte_list_to_double_list(telemetries)
+		clearance = byte_list_to_double_list(telemetries,0)
+		crest = byte_list_to_double_list(telemetries,1)
+		grms = byte_list_to_double_list(telemetries,2)
+		kurtosis = byte_list_to_double_list(telemetries,3)
+		skewness = byte_list_to_double_list(telemetries,4)
 
 		telems = {
 			"temperature":temperature/100,
@@ -458,16 +478,16 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			"skewness":skewness
 		}
 
-		if int(patch) >= 9:
-			vrms = byte_list_to_double_list(telemetries)
-			peak = byte_list_to_double_list(telemetries)
-			sum = byte_list_to_double_list(telemetries)
+		if dev_version.patch >= 9:
+			vrms = byte_list_to_double_list(telemetries,5)
+			peak = byte_list_to_double_list(telemetries,6)
+			sum = byte_list_to_double_list(telemetries,7)
 			telems["vrms"] = vrms
 			telems["peak"] = peak
 			telems["sum"] = sum
 			
-		if int(patch) >= 13:
-			peak_to_peak = byte_list_to_double_list(telemetries)
+		if dev_version.patch >= 13:
+			peak_to_peak = byte_list_to_double_list(telemetries,8)
 			telems["peak_to_peak"] = peak_to_peak
 
 		return telems
@@ -580,12 +600,10 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			self.ser.baudrate = 115200
 
 	def __find_available_id(self):
-		flag = 0; #16bit data, since max device is smaller than 16 we can use it safely
-
+		flag = 0 #16bit data, since max device is smaller than 16 we can use it safely
 		#Now set the bits if we have a device at that bit
 		for x in self.device_map.values():
-			flag |= (0x01 << x.user_defined_id);
-		
+			flag |= (0x01 << x.user_defined_id)
 		#Find the first zero bit
 		for i in range(len(self.device_map)):
 			if( ( (flag>>i) & 0x01) == 0):
@@ -626,7 +644,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			read_amount = self.data_queue.qsize()
 
 			while read_amount:
-				packet:PySMComPacket = self.data_queue.get()
+				packet:SMComPyPacket = self.data_queue.get()
 				if packet.message_id != SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INIT.value:
 					break
 
@@ -636,15 +654,18 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 				version = incoming_data[6:]
 				if(verbose):
 					print("Wired device '%s' found"%mac_adr)
-				id = self.__find_available_id()
-				write_ret = self.__assign_new_id(mac_adr, id)
+				_id = self.__find_available_id()
+				write_ret = self.__assign_new_id(mac_adr, _id)
 				if(write_ret == SMComPy.SMCOM_STATUS_SUCCESS):
-					self.device_map[mac_adr] = Wired(mac_adr,version,id)
+					self.device_map[mac_adr] = Wired(mac_adr,version, _id)
 				else:
 					print("Cannot add device ",mac_adr)
 				read_amount -= 1
-		
-		if(len(self.device_map) == 0 and verbose):            
+
+			if(len(self.device_map) == max_device):
+				break
+
+		if(len(self.device_map) == 0 and verbose):
 			print("No device found in network")
 			return {}
 
