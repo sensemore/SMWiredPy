@@ -1,8 +1,12 @@
 import SMWiredPy
+from matplotlib import pyplot as plt
+import numpy as np
+
 
 wired_network = SMWiredPy.SMWired(port = "/dev/ttyUSB0", configure_network='auto', max_device_number=2)
 #Dump the list of found available devices
 print("Found available devices:",wired_network.get_available_devices())
+
 
 devices = wired_network.get_available_devices()
 
@@ -15,14 +19,12 @@ for device in devices:
 
 mac = 'CA:B8:31:00:00:55'
 accelerometer_range = "16G"
-sampling_frequency = 6400
-sample_size = 10000
-
+sampling_frequency = 12800
+sample_size = 200000
 
 def meas_deneme(mac):
 	measurement_result = wired_network.measure(mac,accelerometer_range,sampling_frequency,sample_size)
-	from matplotlib import pyplot as plt
-	import numpy as np
+
 	result_acc_x = measurement_result[0]
 	result_acc_y = measurement_result[1]
 	result_acc_z = measurement_result[2]
@@ -30,20 +32,22 @@ def meas_deneme(mac):
 	plt.show()
 
 def sync_Deneme():
+	print("Calling measure sync")
 	measurement_map = wired_network.measure_sync(accelerometer_range,sampling_frequency,sample_size)
-	from matplotlib import pyplot as plt
-	import numpy as np
-
+	
 	# measurement_map
 	for m in measurement_map.keys():
 	#m = "CA:B8:31:00:00:55"
-		result = np.array(measurement_map[m])
-		x = result[0]
+		print("np! m",m,len(measurement_map[m]),len(measurement_map[m][0]))
+		result = measurement_map[m]
+		#x = np.array(result[0])
+		#print(x.shape)
 		#x = x - np.mean(x)
-		print(mac,x)
-		plt.plot(x)
+		#print(mac,x)
+		#plt.plot(x,'.')
+		#continue
 	
-	plt.legend(list(measurement_map.keys()))
+	#plt.legend(list(measurement_map.keys()))
 
 
 	# import json
@@ -51,10 +55,10 @@ def sync_Deneme():
 	# with open("anil_sync_measurement.json","w+") as f:
 	# 	json.dump(measurement_map,f)
 
-	plt.show()
+	#plt.show()
 
 
-sync_Deneme()
+x = sync_Deneme()
 # for mac in wired_network.get_available_devices():
 # 	meas_deneme(mac)
 

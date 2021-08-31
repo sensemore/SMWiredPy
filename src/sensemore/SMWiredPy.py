@@ -10,7 +10,7 @@ from argparse import ArgumentParser
 
 #Before importing SMComPy check the .so or .dll file!
 import SMComPy
-WIRED_APPLICATION_BAUDRATE = 115200
+WIRED_APPLICATION_BAUDRATE = 1000000
 WIRED_FIRMWARE_UPDATE_BAUDRATE = 1000000
 WIRED_MAX_DEVICE = 12 # Max allowed device number in the network!
 PORT = "/dev/ttyUSB0" # Default port for linux
@@ -83,13 +83,15 @@ class SMCOM_WIRED_MESSAGES(Enum):
 	GET_SUM							= 25
 
 class WIRED_MESSAGE_STATUS(Enum):
-	ERROR               = 0 	#!< [0] If the corresponding msg_handler fails put 0 for result status as an error, maybe additional message explanation
-	SUCCESS             = 1 	#!< [1] If everything is okay handler sends 1 to indicate message is handled succesfully
-	TIMEOUT             = 2		#!< [3] If the message handler sees a timeout error send this
-	DATA                = 3		#!< [4] If we send data we will put first this result
-	WRONG_MESSAGE       = 4 	#!< [5] If incoming message is broken or data is missing
-	BROKEN_PACKET       = 5
-
+	ERROR               	= 0 	#!< [0] If the corresponding msg_handler fails put 0 for result status as an error, maybe additional message explanation
+	SUCCESS             	= 1 	#!< [1] If everything is okay handler sends 1 to indicate message is handled succesfully
+	TIMEOUT             	= 2		#!< [3] If the message handler sees a timeout error send this
+	DATA                	= 3		#!< [4] If we send data we will put first this result
+	WRONG_MESSAGE       	= 4 	#!< [5] If incoming message is broken or data is missing
+	BROKEN_PACKET       	= 5
+	NO_MEASUREMENT 			= 6
+	BROKEN_MEASUREMENT 		= 7
+	MEASUREMENT_TIMEOUT 	= 8
 
 
 class WIRED_ACCELEROMETER_RANGE(Enum):
@@ -149,19 +151,21 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		self.__master_id = 13 #master id defined by us never change it!
 		super().__init__(self.__master_id)
 		self.transmitter_id = self.__master_id
+		self.__data_queue = queue.Queue()
+		self.__mutex = threading.Lock()
+		self.__mutex_timeout = 10
+		self.__continue_thread = True
+
 		try:
 			self.__ser = serial.Serial(port,baudrate=WIRED_APPLICATION_BAUDRATE)
 		except:
 			self.__ser = None
 			print("Serial port cannot be opened, please check usb is placed correctly!")
+			exit()
 			return
 
 		atexit.register(self.__del__)
-
-		self.__data_queue = queue.Queue()
-		self.__mutex = threading.Lock()
-		self.__mutex_timeout = 10
-		self.__continue_thread = True
+		
 
 		self.__listener_thread = threading.Thread(target=self.__thread_func__, daemon=True)
 		self.__listener_thread.start()
@@ -175,7 +179,8 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 
 	def __del__(self):
 		self.__continue_thread = False
-		if(self.__mutex.locked()):
+		#Try to get mutex immediately or wait 
+		if(self.__mutex.acquire(timeout=1)):
 			self.__mutex.release()
 		self.__ser.close()
 
@@ -188,7 +193,6 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			if(x != SMComPy.SMCOM_STATUS_DEFAULT):
 				pass
 				#print(x)
-			time.sleep(0.01)
 
 	def __write__(self, buffer, length):
 		"""
@@ -220,7 +224,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		"""
 			overloaded __rx_callback__ function, inherited from SMCom
 		"""
-		print("Got packet! stauts:",status)
+		#print("rx callback:",status)
 		if(status != SMComPy.SMCOM_STATUS_SUCCESS):
 			print("Error occured rx callback!")
 			self.__ser.flush()
@@ -239,9 +243,10 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			overloaded __available__ function, inherited from SMCom
 		"""
 		avlb = 0
-		if(self.__mutex.acquire(blocking=True,timeout=self.__mutex_timeout)):
-			avlb = self.__ser.inWaiting()
-			self.__mutex.release()
+		#if(self.__mutex.acquire(blocking=True,timeout=self.__mutex_timeout)):
+			#print("__avaiable__ got mutex")
+		avlb = self.__ser.inWaiting()
+		#	self.__mutex.release()
 		return avlb
 
 	def __read__(self, length):
@@ -290,7 +295,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 				return False
 
 			try:
-				packet = self.__data_queue.get(timeout=3)
+				packet = self.__data_queue.get(timeout=1)
 				data = packet.data
 				inc_mac = data[:-3]
 				inc_version = data[6:]
@@ -304,7 +309,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 
 				#print("Cannot add device %s, not in the network or connection problem"%mac)
 
-	def get_version(self:object, mac:str, timeout:int = 3):
+	def get_version(self:object, mac:str, timeout:int = 1):
 		"""
 		Takes mac address of the device and returns its version in format (MAJOR.MINOR.PATCH)(Ex. 1.0.12)
 		If cannot communicate via device, returns None
@@ -385,18 +390,111 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		#Check write!
 		self.write(SMComPy.PUBLIC_ID_4BIT.value, SMCOM_WIRED_MESSAGES.START_BATCH_MEASUREMENT.value, data, len(data))
 		#calculate end amount and give also additional time
-		expected_timeout = sample_size/freq + 3 #(sample_size*0.001)
-		print(expected_timeout)
+		expected_timeout = sample_size/freq + (sample_size*4e-5)
+		print("expected timeout = ",expected_timeout)
 		time.sleep(expected_timeout)
 		return True
 
 	def read_measurement(self, mac, sample_size, coefficient = 0, timeout = 10):
+		
+		device_id = self.device_map[mac].user_defined_id
+
+		current_byte_offset = 0
+		measurement_byte_size = sample_size * 6 #Convert to bytes
+		reverse_byte_size = (sample_size*6) # Counts by reverse, when it hits to zero we must get all the measurement
+		expected_data_len = min(240,reverse_byte_size) # For the last package this may not be 240, other than that it will be 240 always!
+		data_recovery_list = []
+
+		tmp = {}
+		tmp["byte_offset"] = 0
+		tmp["data_len"] = measurement_byte_size
+		data_recovery_list.append(tmp)
+
+		raw_measurement_data = [0]*(sample_size*6)
+		from math import ceil
+
+		_max_retry_for_read = 5
+		retry = 0
+		last_packet_size = measurement_byte_size%240
+		last_packet_byte_offset = (measurement_byte_size - last_packet_size)/240 + (last_packet_size != 0)
+
+		while(len(data_recovery_list) > 0 and retry < _max_retry_for_read):
+			tmp = data_recovery_list.pop()
+			tmp_byte_offset = tmp["byte_offset"]
+			tmp_data_len = tmp["data_len"]
+			
+			current_byte_offset = tmp_byte_offset
+
+			print("Sending :",tmp)
+			data = [*tuple(tmp_byte_offset.to_bytes(4, "little")),*tuple(tmp_data_len.to_bytes(4, "little"))]
+			self.write(device_id, SMCOM_WIRED_MESSAGES.GET_BATCH_MEASUREMENT_CHUNK.value, data, len(data))
+			retry += 1
+			#iterate over all expected packets, even though they could be broken we will try to read
+			no_expected_packet = ceil(tmp_data_len / 240)
+			print("# of expected:",no_expected_packet)
+			last_written_byte_offset = -1
+			next_byte_offset = -1
+			for _ in range(no_expected_packet):
+				packet = self.__get_message(timeout=1)
+				print(packet,current_byte_offset)
+				if ( (_ == 0 or _ == 1 or _ == (last_packet_byte_offset-1)) and no_expected_packet > 3):
+					packet = None
+				if(packet == None or WIRED_MESSAGE_STATUS(packet.data[0]) != WIRED_MESSAGE_STATUS.SUCCESS):
+					#Do not put the same recovery data twice, check it
+					tmp = {}
+					tmp["byte_offset"] = current_byte_offset
+					tmp["data_len"] = 240 if current_byte_offset != last_packet_byte_offset else last_packet_size
+					data_recovery_list.append(tmp)
+					print("Appending :",tmp)
+
+					current_byte_offset += expected_data_len
+					if(len(data_recovery_list) >= 10):
+						print("too much")
+						exit()
+					continue
+				#Got the packet and its status ok!
+				retry = 0
+				packet_data_len = packet.data[1]
+				packet_measurement = packet.data[2:2+expected_data_len]
+				raw_measurement_data[current_byte_offset:current_byte_offset+packet_data_len] = packet_measurement
+				reverse_byte_size -= packet_data_len
+				current_byte_offset += packet_data_len
+				expected_data_len = 240 if current_byte_offset != last_packet_byte_offset else last_packet_size
+				print(reverse_byte_size)
+
+		if(retry >= _max_retry_for_read):
+			print("------------- Cannot read measurement : retry failed ------------ ")
+			exit()
+			return None
+		
+		if(reverse_byte_size != 0):
+			print("------------- Cannot read measurement : measurement data broken ------------ ")
+			exit()
+			return None
+
+		measurement_data = [[0]*sample_size,[0]*sample_size,[0]*sample_size]
+		#Handle coefficient, default is zero which is not multiplied by coefficient!
+		coef = coefficient
+		if(coef == 0):
+			coef = 1 #multiply by itself
+
+		iter = 0
+		for it in range(0,sample_size*6,6):
+			one_packet = raw_measurement_data[it:it+6]
+			measurement_data[0][iter] = int.from_bytes(one_packet[0:2],byteorder='little',signed=True)*coef
+			measurement_data[1][iter] = int.from_bytes(one_packet[2:4],byteorder='little',signed=True)*coef
+			measurement_data[2][iter] = int.from_bytes(one_packet[4:6],byteorder='little',signed=True)*coef
+			iter += 1
+
+		return measurement_data
+
+	def x_read_measurement(self, mac, sample_size, coefficient = 0, timeout = 10):
 		#Wait for all packets
 		byte_offset = 0 # Start from the beginning
-		data_len = sample_size * 6 #Convert to bytes
+		measurement_data_len = sample_size * 6 #Convert to bytes
 
 		device_id = self.device_map[mac].user_defined_id
-		data = [*tuple(byte_offset.to_bytes(4, "little")),*tuple(data_len.to_bytes(4, "little"))]
+		data = [*tuple(byte_offset.to_bytes(4, "little")),*tuple(measurement_data_len.to_bytes(4, "little"))]
 
 		#Check write!
 		self.write(device_id, SMCOM_WIRED_MESSAGES.GET_BATCH_MEASUREMENT_CHUNK.value, data, len(data))
@@ -404,60 +502,72 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		measurement_data = [[0]*sample_size,[0]*sample_size,[0]*sample_size]
 		raw_measurement_data = [[0]*(sample_size*6)]
 
-		print("I am =",mac)
+		data_recovery_list = []
+		reverse_byte_size = (sample_size*6) # Counts by reverse, when it hits to zero we must get all the measurement
 
-		from math import ceil
-		expected_packets = ceil(data_len/240)
-		retry = 0
+		expected_data_len = min(240,reverse_byte_size) # For the last package this may not be 240, other than that it will be 240 always!
+
 		raw_it = 0
-		print(expected_packets)
-		while(len(raw_measurement_data) != data_len):
+		current_byte_offset = 0
+		while(len(raw_measurement_data) < measurement_data_len):
 			packet = self.__get_message(timeout=10)
-			#if(packet == None):
-			#	retry += 1
-			#	continue
+			if(packet == None or packet.status != SMComPy.SMCOM_STATUS_SUCCESS):
+				tmp = {}
+				tmp["byte_offset"] = current_byte_offset
+				tmp["data_len"] = expected_data_len
+				data_recovery_list.append(tmp)
+				continue
 			
 			raw_data = packet.data
 			measurement_status = WIRED_MESSAGE_STATUS(raw_data[0])
-			# if(measurement_status != 3):
-			# 	retry += 1
-			# 	continue
+			if(measurement_status != WIRED_MESSAGE_STATUS.SUCCESS.value):
+				tmp = {}
+				tmp["byte_offset"] = current_byte_offset
+				tmp["data_len"] = expected_data_len
+				data_recovery_list.append(tmp)
+				continue
 
-			print("Got packet:",expected_packets,measurement_status)
+			packet_data_len = raw_data[1]
+			packet_measurement = raw_data[2:2+expected_data_len]
+			raw_measurement_data[raw_it:raw_it+expected_data_len] = packet_measurement
+			raw_it += packet_data_len
+			current_byte_offset = len(raw_measurement_data)
+			expected_data_len = min(240,reverse_byte_size)
+			reverse_byte_size -= packet_data_len
+			print("current byte offset:",current_byte_offset)
 
-			expected_packets -= 1
-			print(raw_data[1:])
-			#print(expected_packets,measurement_status)
-			#measurement_data_len = raw_data[1]
-			raw_measurement_data[raw_it:raw_it+240] = raw_data[1:]
-			raw_it += 240
-			print(len(raw_measurement_data))
-			#raw_measurement_data.extend(raw_data[1:])
+		retry = 0
+		while(len(data_recovery_list) > 0 and retry < 5):
+			tmp = data_recovery_list[-1]
+			print("Lost packet in recovery list:",tmp)
+			tmp_byte_offset = tmp["byte_offset"]
+			tmp_data_len = tmp["data_len"]
+			data = [*tuple(tmp_byte_offset.to_bytes(4, "little")),*tuple(tmp_data_len.to_bytes(4, "little"))]
+			self.write(device_id, SMCOM_WIRED_MESSAGES.GET_BATCH_MEASUREMENT_CHUNK.value, data, len(data))
+			packet = self.__get_message(timeout=10)
+			if(packet != None):
+				#Got the data!
+				raw_data = packet.data
+				packet_data_len = raw_data[1]
+				packet_measurement = raw_data[2:2+tmp_data_len]
+				raw_measurement_data[tmp_byte_offset:tmp_byte_offset+tmp_data_len] = packet_measurement
+				
 
-		print(raw_it)
-		if(retry == 5):
-			print("Error occured while reading measurement")
-			return None
 
-		it = 0
-		iter = 0
-
+		#Handle coefficient, default is zero which is not multiplied by coefficient!
 		coef = coefficient
 		if(coef == 0):
 			coef = 1 #multiply by itself
 
-		print("Now waiting -2 ")
-
-		while(it < (sample_size*6)):
+		iter = 0
+		for it in range(0,sample_size*6,6):
 			one_packet = raw_measurement_data[it:it+6]
-			it += 6
 			measurement_data[0][iter] = int.from_bytes(one_packet[0:2],byteorder='little',signed=True)*coef
 			measurement_data[1][iter] = int.from_bytes(one_packet[2:4],byteorder='little',signed=True)*coef
 			measurement_data[2][iter] = int.from_bytes(one_packet[4:6],byteorder='little',signed=True)*coef
 			iter += 1
 
-		print("Returning!")
-		time.sleep(1)
+		print("Returning measurement")
 		return measurement_data
 
 	def measure(self, mac, acc, freq, sample_size, timeout=10):
@@ -475,12 +585,11 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			return False
 		
 		coef = self.accelerometer_coefficients[acc_range_dict[acc]]
-		
 		meas = {}
-		
 		for mac in self.device_map:
 			meas[mac] = self.read_measurement(mac,sample_size,coefficient= coef,timeout = timeout)
 		
+		print("Now returning1")
 		return meas
 		
 	def get_all_telemetry(self, mac, timeout = 30):
@@ -696,18 +805,13 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 				write_ret = self.write(wired_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INIT.value, msg_data, len(msg_data))
 				if write_ret == SMComPy.SMCOM_STATUS_SUCCESS or write_ret == SMComPy.SMCOM_STATUS_PORT_BUSY:
 					break
-			if write_ret == SMComPy.SMCOM_STATUS_PORT_BUSY:
-				pass
-			elif write_ret == SMComPy.SMCOM_STATUS_SUCCESS:
-				pass
-			else:
-				return {}
+				else:
+					return {}
 
 			time.sleep(wait_time/1000)
 			read_amount = self.__data_queue.qsize()
-
-			while read_amount:
-				packet:SMComPyPacket = self.__data_queue.get()
+			for _ in range(read_amount):
+				packet = self.__data_queue.get()
 				if packet.message_id != SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INIT.value:
 					break
 
@@ -723,7 +827,6 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 					self.device_map[mac_adr] = Wired(mac_adr,version, _id)
 				else:
 					print("Cannot add device ",mac_adr)
-				read_amount -= 1
 
 			if(len(self.device_map) == max_device):
 				break
