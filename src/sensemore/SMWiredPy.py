@@ -10,7 +10,7 @@ from argparse import ArgumentParser
 
 #Before importing SMComPy check the .so or .dll file!
 import SMComPy
-WIRED_APPLICATION_BAUDRATE = 1000000
+WIRED_APPLICATION_BAUDRATE = 115200
 WIRED_FIRMWARE_UPDATE_BAUDRATE = 1000000
 WIRED_MAX_DEVICE = 12 # Max allowed device number in the network!
 PORT = "/dev/ttyUSB0" # Default port for linux
@@ -389,9 +389,8 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		data = [acc_index,freq_index,*tuple(sample_size.to_bytes(4, "little")), 0]
 		#Check write!
 		self.write(SMComPy.PUBLIC_ID_4BIT.value, SMCOM_WIRED_MESSAGES.START_BATCH_MEASUREMENT.value, data, len(data))
-		#calculate end amount and give also additional time
+		#calculate end amount and give also additional time for erasing flash
 		expected_timeout = sample_size/freq + (sample_size*4e-5)
-		print("expected timeout = ",expected_timeout)
 		time.sleep(expected_timeout)
 		return True
 
@@ -417,6 +416,8 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		retry = 0
 		last_packet_size = measurement_byte_size%240
 		last_packet_byte_offset = (measurement_byte_size - last_packet_size)/240 + (last_packet_size != 0)
+		if(last_packet_size == measurement_byte_size):
+			last_packet_byte_offset = 0
 
 		while(len(data_recovery_list) > 0 and retry < _max_retry_for_read):
 			tmp = data_recovery_list.pop()
@@ -425,32 +426,24 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			
 			current_byte_offset = tmp_byte_offset
 
-			print("Sending :",tmp)
 			data = [*tuple(tmp_byte_offset.to_bytes(4, "little")),*tuple(tmp_data_len.to_bytes(4, "little"))]
 			self.write(device_id, SMCOM_WIRED_MESSAGES.GET_BATCH_MEASUREMENT_CHUNK.value, data, len(data))
 			retry += 1
 			#iterate over all expected packets, even though they could be broken we will try to read
 			no_expected_packet = ceil(tmp_data_len / 240)
-			print("# of expected:",no_expected_packet)
-			last_written_byte_offset = -1
-			next_byte_offset = -1
 			for _ in range(no_expected_packet):
-				packet = self.__get_message(timeout=1)
-				print(packet,current_byte_offset)
-				if ( (_ == 0 or _ == 1 or _ == (last_packet_byte_offset-1)) and no_expected_packet > 3):
-					packet = None
+				packet = self.__get_message(timeout=3)
 				if(packet == None or WIRED_MESSAGE_STATUS(packet.data[0]) != WIRED_MESSAGE_STATUS.SUCCESS):
 					#Do not put the same recovery data twice, check it
 					tmp = {}
 					tmp["byte_offset"] = current_byte_offset
 					tmp["data_len"] = 240 if current_byte_offset != last_packet_byte_offset else last_packet_size
 					data_recovery_list.append(tmp)
-					print("Appending :",tmp)
 
 					current_byte_offset += expected_data_len
-					if(len(data_recovery_list) >= 10):
-						print("too much")
-						exit()
+					if(len(data_recovery_list) >= 30):
+						print("Lost the connection")
+						return None
 					continue
 				#Got the packet and its status ok!
 				retry = 0
@@ -458,9 +451,8 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 				packet_measurement = packet.data[2:2+expected_data_len]
 				raw_measurement_data[current_byte_offset:current_byte_offset+packet_data_len] = packet_measurement
 				reverse_byte_size -= packet_data_len
-				current_byte_offset += packet_data_len
 				expected_data_len = 240 if current_byte_offset != last_packet_byte_offset else last_packet_size
-				print(reverse_byte_size)
+				current_byte_offset += packet_data_len
 
 		if(retry >= _max_retry_for_read):
 			print("------------- Cannot read measurement : retry failed ------------ ")
@@ -589,7 +581,6 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		for mac in self.device_map:
 			meas[mac] = self.read_measurement(mac,sample_size,coefficient= coef,timeout = timeout)
 		
-		print("Now returning1")
 		return meas
 		
 	def get_all_telemetry(self, mac, timeout = 30):

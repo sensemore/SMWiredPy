@@ -20,7 +20,7 @@ for device in devices:
 mac = 'CA:B8:31:00:00:55'
 accelerometer_range = "16G"
 sampling_frequency = 12800
-sample_size = 200000
+sample_size = 2000
 
 def meas_deneme(mac):
 	measurement_result = wired_network.measure(mac,accelerometer_range,sampling_frequency,sample_size)
@@ -32,7 +32,6 @@ def meas_deneme(mac):
 	plt.show()
 
 def sync_Deneme():
-	print("Calling measure sync")
 	measurement_map = wired_network.measure_sync(accelerometer_range,sampling_frequency,sample_size)
 	
 	# measurement_map
