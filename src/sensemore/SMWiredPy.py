@@ -81,17 +81,24 @@ class SMCOM_WIRED_MESSAGES(Enum):
 	GET_VRMS						= 23
 	GET_PEAK						= 24
 	GET_SUM							= 25
+	GET_LAST_MEASUREMENT_STATUS		= 26
 
 class WIRED_MESSAGE_STATUS(Enum):
 	ERROR               	= 0 	#!< [0] If the corresponding msg_handler fails put 0 for result status as an error, maybe additional message explanation
 	SUCCESS             	= 1 	#!< [1] If everything is okay handler sends 1 to indicate message is handled succesfully
 	TIMEOUT             	= 2		#!< [3] If the message handler sees a timeout error send this
-	DATA                	= 3		#!< [4] If we send data we will put first this result
-	WRONG_MESSAGE       	= 4 	#!< [5] If incoming message is broken or data is missing
-	BROKEN_PACKET       	= 5
-	NO_MEASUREMENT 			= 6
+	WRONG_MESSAGE       	= 3 	#!< [5] If incoming message is broken or data is missing
+	BROKEN_PACKET       	= 4
+	NO_MEASUREMENT 			= 5
+	INVALID_MEASUREMENT		= 6
 	BROKEN_MEASUREMENT 		= 7
 	MEASUREMENT_TIMEOUT 	= 8
+	FLASH_ERASE_ERROR		= 9
+	FLASH_WRITE_ERROR		= 10
+	FLASH_READ_ERROR		= 11
+	NO_MEMORY				= 12
+	ACCELEROMETER_ERROR		= 13
+
 
 
 class WIRED_ACCELEROMETER_RANGE(Enum):
@@ -175,7 +182,8 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		if(configure_network == 'auto'):
 			self.scan(max_device_number)
 		if(isinstance(configure_network,list)):
-			self.___scan_wired_mac_list(configure_network)
+			if(self.___scan_wired_mac_list(configure_network) == False):
+				exit()
 
 	def __del__(self):
 		self.__continue_thread = False
@@ -190,9 +198,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		"""
 		while self.__continue_thread:
 			x = self.listener()
-			if(x != SMComPy.SMCOM_STATUS_DEFAULT):
-				pass
-				#print(x)
+			time.sleep(10*1e-6)
 
 	def __write__(self, buffer, length):
 		"""
@@ -304,8 +310,10 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 					continue
 				self.device_map[mac] = Wired(mac,inc_version,user_defined_id)
 				write_ret = self.__assign_new_id(mac, user_defined_id) # So device is on the entwork, assign it again
+				return True
 			except queue.Empty:
 				print("No device found ",mac)
+				return False
 
 				#print("Cannot add device %s, not in the network or connection problem"%mac)
 
@@ -356,7 +364,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		return write_ret
 
 	def start_batch_measurement(self, mac, acc, freq, sample_size, notify_measurement_end = True):
-		if(sample_size <= 0 or sample_size >= 1000000 or (str(freq) not in sampling_frequency_dict.keys()) or (str(acc) not in acc_range_dict.keys()) ):
+		if(sample_size <= 0 or sample_size > 1000000 or (str(freq) not in sampling_frequency_dict.keys()) or (str(acc) not in acc_range_dict.keys()) ):
 			#Return arg error here
 			return None
 
@@ -390,12 +398,19 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		#Check write!
 		self.write(SMComPy.PUBLIC_ID_4BIT.value, SMCOM_WIRED_MESSAGES.START_BATCH_MEASUREMENT.value, data, len(data))
 		#calculate end amount and give also additional time for erasing flash
-		expected_timeout = sample_size/freq + (sample_size*4e-5)
+		expected_timeout = sample_size/freq + (sample_size*4e-5) + 1
+		print("Expected timeout:",expected_timeout)
 		time.sleep(expected_timeout)
 		return True
 
+	def check_last_measurement_status(self,mac):
+		device_id = self.device_map[mac].user_defined_id
+		self.write(device_id, SMCOM_WIRED_MESSAGES.GET_LAST_MEASUREMENT_STATUS.value,[],0)
+		packet = self.__get_message(timeout=2)
+		print("cechking last meas:",packet.data)
+
+
 	def read_measurement(self, mac, sample_size, coefficient = 0, timeout = 10):
-		
 		device_id = self.device_map[mac].user_defined_id
 
 		current_byte_offset = 0
@@ -439,7 +454,6 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 					tmp["byte_offset"] = current_byte_offset
 					tmp["data_len"] = 240 if current_byte_offset != last_packet_byte_offset else last_packet_size
 					data_recovery_list.append(tmp)
-
 					current_byte_offset += expected_data_len
 					if(len(data_recovery_list) >= 30):
 						print("Lost the connection")
@@ -449,6 +463,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 				retry = 0
 				packet_data_len = packet.data[1]
 				packet_measurement = packet.data[2:2+expected_data_len]
+
 				raw_measurement_data[current_byte_offset:current_byte_offset+packet_data_len] = packet_measurement
 				reverse_byte_size -= packet_data_len
 				expected_data_len = 240 if current_byte_offset != last_packet_byte_offset else last_packet_size
@@ -609,7 +624,11 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 					double peak_to_peak[3];
 				}__attribute__((packed)) resp_get_all_telemetry;
 		"""
-		status = data[0]
+		status = WIRED_MESSAGE_STATUS(data[0])
+		if(status  != WIRED_MESSAGE_STATUS.SUCCESS):
+			print("Telemetry read error")
+			return None
+
 		temperature = int.from_bytes(data[1:3],"little",signed=False)
 		calibrated_frequency = int.from_bytes(data[3:7],"little",signed=False)
 		telemetries = data[7:]
