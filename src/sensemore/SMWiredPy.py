@@ -18,6 +18,7 @@ WIRED_FIRMWARE_MAX_RETRY_FOR_ONE_PACKET = 5
 debug__ = False
 
 
+__VERSION__ = "1.0.0"
 
 
 class SMCom_version():
@@ -882,6 +883,8 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 def parser_function():
 	parser = ArgumentParser(description = "SMComPy wired library to get measurements and update firmware")
 	sub_parsers = parser.add_subparsers(help = 'sub-command help')
+
+	parser.add_argument('-v','--version',action="version", version= __VERSION__)
 
 	update_parser = sub_parsers.add_parser('update', help = 'Update firmware of the device connected to given port with given bin file')
 	update_parser.set_defaults(which='update')

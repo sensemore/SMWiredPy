@@ -14,7 +14,7 @@ with open("README.md", "r", encoding="utf-8") as f:
 
 setup(
     name="SMWiredPy",
-    version="0.0.11",
+    version="1.0.0",
     author="sensemore",
 	author_email="hello@sensemore.io",
     url="https://www.sensemore.io",
