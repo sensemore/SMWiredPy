@@ -382,7 +382,6 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			#calculate end amount and give also additional time
 			expected_timeout = sample_size/freq + (sample_size*1)
 			data_packet = self.__data_queue.get(timeout = expected_timeout)
-			print("meas done data packet:",data_packet.data)
 			return (data_packet.data[0] == WIRED_MESSAGE_STATUS.SUCCESS.value)
 
 		return True
