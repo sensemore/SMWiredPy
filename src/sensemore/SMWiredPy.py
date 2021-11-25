@@ -1,4 +1,4 @@
-__version__="1.0.1"
+__version__="1.0.2"
 __VERSION__=__version__
 
 from os import read, write

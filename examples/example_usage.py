@@ -18,8 +18,6 @@ accelerometer_range = "16G"
 sampling_frequency = 6400
 sample_size = 20000
 
-#wired_network.firmware_update(mac,'Wiredv1_0_13.bin')
-
 measurement_result = wired_network.measure(mac,accelerometer_range,sampling_frequency,sample_size)
 
 result_acc_x = measurement_result[0]
