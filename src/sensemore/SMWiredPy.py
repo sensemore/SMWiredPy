@@ -1,3 +1,6 @@
+__version__="1.0.1"
+__VERSION__=__version__
+
 from os import read, write
 import serial
 import threading
@@ -17,8 +20,6 @@ PORT = "/dev/ttyUSB0" # Default port for linux
 WIRED_FIRMWARE_MAX_RETRY_FOR_ONE_PACKET = 5
 debug__ = False
 
-
-__VERSION__ = "1.0.0"
 
 
 class SMCom_version():
@@ -71,6 +72,7 @@ class SMCOM_WIRED_MESSAGES(Enum):
 	AUTO_ADDRESSING_SET_NEW_ID 		= 12
 	START_BATCH_MEASUREMENT 		= 13
 	GET_BATCH_MEASUREMENT 			= 14
+	#Added after v1.0.0(do not include 1.0.0)
 	GET_CLEARANCE					= 15
 	GET_CREST 						= 16
 	GET_GRMS 						= 17
@@ -78,11 +80,16 @@ class SMCOM_WIRED_MESSAGES(Enum):
 	GET_SKEWNESS 					= 19
 	GET_BATCH_MEASUREMENT_CHUNK 	= 20
 	AUTO_ADDRESSING_INTEGRITY_CHECK = 21
+	#Added after v1.0.4(do not include 1.0.4)
 	GET_ALL_TELEMETRY 				= 22
+	#Added after v1.0.8(do not include 1.0.8)
 	GET_VRMS						= 23
 	GET_PEAK						= 24
 	GET_SUM							= 25
+	#Added after v1.0.14(do not include 1.0.14)
 	GET_LAST_MEASUREMENT_STATUS		= 26
+	#Added after v1.0.15(do not include 1.0.15)
+	START_STREAM_MEASUREMENT		= 27
 
 class WIRED_MESSAGE_STATUS(Enum):
 	ERROR               	= 0 	#!< [0] If the corresponding msg_handler fails put 0 for result status as an error, maybe additional message explanation
@@ -292,14 +299,12 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			user_defined_id = self.__find_available_id()
 			write_ret = self.__assign_new_id(mac, user_defined_id)
 			if(write_ret !=  SMComPy.SMCOM_STATUS_SUCCESS):
-				print("USB port write problem")
-				return False
+				raise Exception("Cannot write to usb port")
 
 			#This message changes the assigned id, use it with care!
 			write_ret = self.write(user_defined_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INIT.value, [0,0,0,0,0], 5)
 			if(write_ret !=  SMComPy.SMCOM_STATUS_SUCCESS):
-				print("USB port write problem")
-				return False
+				raise Exception("Cannot write to usb port")
 
 			try:
 				packet = self.__data_queue.get(timeout=1)
@@ -327,11 +332,12 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		user_defined_id = self.device_map[mac].user_defined_id
 		write_ret = self.write(user_defined_id, SMCOM_WIRED_MESSAGES.GET_VERSION.value, [], 0)
 		if write_ret != SMComPy.SMCOM_STATUS_SUCCESS:
-			return None
+			raise Exception("Cannot write to serial port")
+
 		packet = self.__get_message(timeout=timeout)
 
 		if(packet == None):
-			return None
+			raise Exception("Version message timeout")
 
 		SMComPy_version = packet.data
 		version = f"{SMComPy_version[2]}.{SMComPy_version[1]}.{SMComPy_version[0]}"
@@ -345,7 +351,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		"""
 		write_ret = self.write(device_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INIT.value, [0,0,0,0,0], 5)
 		if write_ret != SMComPy.SMCOM_STATUS_SUCCESS:
-			return write_ret
+			raise Exception("Cannot write to serial port")
 
 		packet = self.__data_queue.get(timeout = timeout)
 
@@ -365,10 +371,15 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		return write_ret
 
 	def start_batch_measurement(self, mac, acc, freq, sample_size, notify_measurement_end = True):
-		if(sample_size <= 0 or sample_size > 1000000 or (str(freq) not in sampling_frequency_dict.keys()) or (str(acc) not in acc_range_dict.keys()) ):
-			#Return arg error here
-			return None
-
+		if(sample_size <= 0 or sample_size > 1000000):
+			raise Exception("Invalid sample size, available range [1,1000000]")
+		
+		if(str(freq) not in sampling_frequency_dict.keys()):
+			raise Exception("Invalid sampling frequency, available frequencies: {}".format(list(sampling_frequency_dict.keys())))
+		
+		if(str(acc) not in acc_range_dict.keys() ):
+			raise Exception("Invalid accelerometer range, available accelerometer ranges: {}".format(list(acc_range_dict.keys())))
+			
 		device_id = self.device_map[mac].user_defined_id
 		#Check the dictionaries
 		acc_index = acc_range_dict[acc]
@@ -377,7 +388,9 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		data = [acc_index,freq_index,*tuple(sample_size.to_bytes(4, "little")), notify_measurement_end]
 
 		#Check write!
-		self.write(device_id, SMCOM_WIRED_MESSAGES.START_BATCH_MEASUREMENT.value, data, len(data))
+		write_ret = self.write(device_id, SMCOM_WIRED_MESSAGES.START_BATCH_MEASUREMENT.value, data, len(data))
+		if write_ret != SMComPy.SMCOM_STATUS_SUCCESS:
+			raise Exception("Cannot write to serial port")
 
 		if(notify_measurement_end):
 			#calculate end amount and give also additional time
@@ -387,16 +400,24 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 
 		return True
 	
-	def start_sync_batch_measurement(self,acc,freq,sample_size):
-		if(sample_size <= 0 or sample_size >= 1000000 or (str(freq) not in sampling_frequency_dict.keys()) or (str(acc) not in acc_range_dict.keys()) ):
-			#Return arg error here
-			return None
+	def __start_sync_batch_measurement(self,acc,freq,sample_size):
+		if(sample_size <= 0 or sample_size > 1000000):
+				raise Exception("Invalid sample size, available range [1,1000000]")
+		
+		if(str(freq) not in sampling_frequency_dict.keys()):
+			raise Exception("Invalid sampling frequency, available frequencies: {}".format(list(sampling_frequency_dict.keys())))
+		
+		if(str(acc) not in acc_range_dict.keys() ):
+			raise Exception("Invalid accelerometer range, available accelerometer ranges: {}".format(list(acc_range_dict.keys())))
+		
 		acc_index = acc_range_dict[acc]
 		freq_index = sampling_frequency_dict[str(freq)]
 
 		data = [acc_index,freq_index,*tuple(sample_size.to_bytes(4, "little")), 0]
 		#Check write!
-		self.write(SMComPy.PUBLIC_ID_4BIT.value, SMCOM_WIRED_MESSAGES.START_BATCH_MEASUREMENT.value, data, len(data))
+		write_ret = self.write(SMComPy.PUBLIC_ID_4BIT.value, SMCOM_WIRED_MESSAGES.START_BATCH_MEASUREMENT.value, data, len(data))
+		if write_ret != SMComPy.SMCOM_STATUS_SUCCESS:
+			raise Exception("Cannot write to serial port")
 		#calculate end amount and give also additional time for erasing flash
 		expected_timeout = sample_size/freq + (sample_size*4e-5) + 1
 		print("Expected timeout:",expected_timeout)
@@ -404,14 +425,22 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		return True
 
 	def check_last_measurement_status(self,mac):
+		version = self.device_map[mac].version
+		if(version.patch < 13):
+			raise Exception("This feature is not supported for device {} with version:{}".format(mac,version))
+
 		device_id = self.device_map[mac].user_defined_id
-		self.write(device_id, SMCOM_WIRED_MESSAGES.GET_LAST_MEASUREMENT_STATUS.value,[],0)
+		write_ret = self.write(device_id, SMCOM_WIRED_MESSAGES.GET_LAST_MEASUREMENT_STATUS.value,[],0)
+		if write_ret != SMComPy.SMCOM_STATUS_SUCCESS:
+			raise Exception("Cannot write to serial port")
+
 		packet = self.__get_message(timeout=2)
-		print("cechking last meas:",packet.data)
 
 
 	def read_measurement(self, mac, sample_size, coefficient = 0, timeout = 10):
 		device_id = self.device_map[mac].user_defined_id
+		
+		version = self.device_map[mac].version
 
 		current_byte_offset = 0
 		measurement_byte_size = sample_size * 6 #Convert to bytes
@@ -434,6 +463,9 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		if(last_packet_size == measurement_byte_size):
 			last_packet_byte_offset = 0
 
+		#For version<=1.0.8 we have a different reading, 0x03 means data for measurement reading
+		expected_status = WIRED_MESSAGE_STATUS.SUCCESS if version.patch > 8 else WIRED_MESSAGE_STATUS(0x03)
+
 		while(len(data_recovery_list) > 0 and retry < _max_retry_for_read):
 			tmp = data_recovery_list.pop()
 			tmp_byte_offset = tmp["byte_offset"]
@@ -448,7 +480,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			no_expected_packet = ceil(tmp_data_len / 240)
 			for _ in range(no_expected_packet):
 				packet = self.__get_message(timeout=3)
-				if(packet == None or WIRED_MESSAGE_STATUS(packet.data[0]) != WIRED_MESSAGE_STATUS.SUCCESS):
+				if(packet == None or WIRED_MESSAGE_STATUS(packet.data[0]) != expected_status):
 					#Do not put the same recovery data twice, check it
 					tmp = {}
 					tmp["byte_offset"] = current_byte_offset
@@ -456,8 +488,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 					data_recovery_list.append(tmp)
 					current_byte_offset += expected_data_len
 					if(len(data_recovery_list) >= 30):
-						print("Lost the connection")
-						return None
+						raise Exception("Lost the connection with the device, too many broken chukns")
 					continue
 				#Got the packet and its status ok!
 				retry = 0
@@ -470,14 +501,10 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 				current_byte_offset += packet_data_len
 
 		if(retry >= _max_retry_for_read):
-			print("------------- Cannot read measurement : retry failed ------------ ")
-			exit()
-			return None
+			raise Exception("Cannot read measurement : retry failed")
 		
 		if(reverse_byte_size != 0):
-			print("------------- Cannot read measurement : measurement data broken ------------ ")
-			exit()
-			return None
+			raise Exception("Cannot read measurement : measurement data broken")
 
 		measurement_data = [[0]*sample_size,[0]*sample_size,[0]*sample_size]
 		#Handle coefficient, default is zero which is not multiplied by coefficient!
@@ -495,7 +522,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 
 		return measurement_data
 
-	def x_read_measurement(self, mac, sample_size, coefficient = 0, timeout = 10):
+	def __x_read_measurement(self, mac, sample_size, coefficient = 0, timeout = 10):
 		#Wait for all packets
 		byte_offset = 0 # Start from the beginning
 		measurement_data_len = sample_size * 6 #Convert to bytes
@@ -582,14 +609,12 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			coef = self.accelerometer_coefficients[acc_range_dict[acc]]
 			return self.read_measurement(mac,sample_size,coefficient= coef,timeout = timeout)
 		else:
-			print("Measurement failed")
-			return None
+			raise Exception("Measurement start failed")
 
 	def measure_sync(self, acc, freq, sample_size, timeout=10):
 		
 		if(self.start_sync_batch_measurement(acc, freq, sample_size) == False):
-			print("Measurement failed")
-			return False
+			raise Exception("Measurement start failed")
 		
 		coef = self.accelerometer_coefficients[acc_range_dict[acc]]
 		meas = {}
@@ -598,12 +623,22 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		
 		return meas
 		
-	def get_all_telemetry(self, mac, timeout = 30):
+	def get_all_telemetry(self, mac, timeout=60):
+		version = self.device_map[mac].version
+		if(version.patch < 12 and timeout<=30):
+			import warnings
+			warnings.warn(f"Sample sizes bigger than 20000 for device {mac} telemetry calculation may require additional timeout, try to increase timeout value")
+			
+
 		device_id = self.device_map[mac].user_defined_id
 		#Check write!
-		self.write(device_id, SMCOM_WIRED_MESSAGES.GET_ALL_TELEMETRY.value, [], 0)
+		write_ret = self.write(device_id, SMCOM_WIRED_MESSAGES.GET_ALL_TELEMETRY.value, [], 0)
+		if write_ret != SMComPy.SMCOM_STATUS_SUCCESS:
+			raise Exception("Cannot write to serial port")
 		#Check also queue data receiver id!, maybe not desired message
 		data = self.__data_queue.get(timeout = timeout).data
+		if(data == None):
+			raise Exception("Cannot read telemetry message, check sample size")
 
 		"""
 			Telemetry message response :
@@ -626,8 +661,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		"""
 		status = WIRED_MESSAGE_STATUS(data[0])
 		if(status  != WIRED_MESSAGE_STATUS.SUCCESS):
-			print("Telemetry read error")
-			return None
+			raise Exception("Telemetry read error")
 
 		temperature = int.from_bytes(data[1:3],"little",signed=False)
 		calibrated_frequency = int.from_bytes(data[3:7],"little",signed=False)
@@ -692,8 +726,8 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 
 		bin_file_size = 240*(len(packets)-1) + len(packets[-1])
 		if bin_file_size == 0:
-			print("Empty File")
-			return
+			raise Exception("Empty bin file")
+			
 
 		if(isinstance(mac,str)):
 			mac_as_byte = [int(x,16) for x in mac.split(':')]
@@ -708,7 +742,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			return SMComPy.SMCOM_STATUS_FAIL
 		try:
 			if(write_ret != SMComPy.SMCOM_STATUS_SUCCESS):
-				return write_ret
+					raise Exception("Cannot write to serial port")
 
 			print("Device %s entered firmware updater mode"%mac)
 			bootloader_id = 12 # This is predefined id for bootloader
@@ -719,15 +753,14 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			write_ret = self.write(bootloader_id, SMCOM_WIRED_MESSAGES.FIRMWARE_PACKET_START.value, start_message, len(start_message))
 
 			if write_ret != SMComPy.SMCOM_STATUS_SUCCESS:
-				print("Cannot send message")
-				return write_ret
+				raise Exception("Cannot send message")
 
 			read_ret = self.__data_queue.get(timeout = timeout).data
 			start_mac_return = read_ret[1:]
 			status = read_ret[0]
 
 			if mac_as_byte != start_mac_return or status != WIRED_MESSAGE_STATUS.SUCCESS.value:
-				print("Wired error")
+				raise Exception("Wired error")
 				return SMComPy.SMCOM_STATUS_FAIL
 
 			for packet_no in range(no_packets + 1):
@@ -846,7 +879,26 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			return {}
 
 		return self.device_map
+	
+	def start_stream_measurement(self,mac, acc, freq, sample_size, timeout=10):
+		if(sample_size <= 0 or (str(freq) not in sampling_frequency_dict.keys()) or (str(acc) not in acc_range_dict.keys()) ):
+				#Return arg error here
+			return None
 
+		device_id = self.device_map[mac].user_defined_id
+		#Check the dictionaries
+		acc_index = acc_range_dict[acc]
+		freq_index = sampling_frequency_dict[str(freq)]
+		#Below are all in bytes except sampling size, so no need to convert we already checked it
+		data = [acc_index,freq_index,*tuple(sample_size.to_bytes(4, "little"))]
+
+		#Check write!
+		self.write(device_id, SMCOM_WIRED_MESSAGES.START_STREAM_MEASUREMENT.value, data, len(data))
+		
+		#calculate end amount and give also additional time
+		expected_timeout = sample_size/freq + (sample_size*1)
+		data_packet = self.__data_queue.get(timeout = expected_timeout)
+		return (data_packet.data[0] == WIRED_MESSAGE_STATUS.SUCCESS.value)
 
 	def integrity_check(self):
 		if debug__ : print(f"Integrity check for {len(self.device_map)} devices")

@@ -1,5 +1,4 @@
 ##### Sensemore Wired Sensor Python Interface #######
-#	
 
 #Required packages
 # SMComPy
@@ -12,9 +11,15 @@ with open("README.md", "r", encoding="utf-8") as f:
     long_description = f.read()
 
 
+
+with open("./src/sensemore/SMWiredPy.py", "r", encoding="utf-8") as f:
+	exec(f.readline()) # First line is version, so get it and execute it
+	version = __version__  # Get the version
+
+
 setup(
     name="SMWiredPy",
-    version="1.0.0",
+    version=version,
     author="sensemore",
 	author_email="hello@sensemore.io",
     url="https://www.sensemore.io",
@@ -35,3 +40,7 @@ setup(
 		"wheel",
 	]
 )
+
+
+print("Setup py runs:......................................................................")
+print("fbgencer\n\n")
