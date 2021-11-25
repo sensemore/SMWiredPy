@@ -1,10 +1,10 @@
 # SMWiredPy
 [Sensemore](https://sensemore.io) - Wired vibration sensor Python interface 
 
-![sm](img/sm.webp)
+![sm](./img/sm.png)
 
 
-![Wired](img/wired.webp)
+![Wired](./img/wired.jpg)
 
 
 ## Installing the library
@@ -27,8 +27,7 @@
 ## Example usage
 
 ``` python
-
-from sensemore import SMWiredPy
+import SMWiredPy
 
 wired_network = SMWiredPy.SMWired(port = "/dev/ttyUSB0", configure_network='auto', max_device_number=2)
 #Dump the list of found available devices
@@ -45,14 +44,21 @@ for device in devices:
 
 mac = 'CA:B8:31:00:00:55'
 accelerometer_range = "16G"
-sampling_frequency = 12800
-sample_size = 100
+sampling_frequency = 6400
+sample_size = 200
+
+#wired_network.firmware_update(mac,'Wiredv1_0_13.bin')
 
 measurement_result = wired_network.measure(mac,accelerometer_range,sampling_frequency,sample_size)
 
+#Measurement results are native python lists
 result_acc_x = measurement_result[0]
 result_acc_y = measurement_result[1]
 result_acc_z = measurement_result[2]
+
+print("Acc-X:",result_acc_x)
+print("Acc-Y:",result_acc_y)
+print("Acc-Z:",result_acc_z)
 
 """
 Also there are telemetries calculated in wired, we can also take it by calling get_all_telemetry
@@ -60,8 +66,6 @@ Also there are telemetries calculated in wired, we can also take it by calling g
 
 telemetries = wired_network.get_all_telemetry(mac)
 print(telemetries)
-
-
 ```
 
 ## Available sampling frequencies
@@ -83,13 +87,16 @@ print(telemetries)
 - 16G
 ```
 
+## Available sample size range
+
+- Up to 1 million sample is supported
 
 ## Command line interface
 
 
-- Updating the wired device via cli
+- Updating the wired device via CLI
 ```bash
-python -m sensemore.SMWiredPy update --port=/dev/ttyUSB0 --mac=CA:B8:31:00:00:3C --file=Wiredv1_0_13.bin 
+python -m sensemore.SMWiredPy update --port=/dev/ttyUSB0 --file=Wiredv1_0_13.bin --mac=CA:B8:31:00:00:3C
 ```
 - Fast measurement via cli
 ```
