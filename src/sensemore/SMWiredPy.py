@@ -1,4 +1,4 @@
-__version__="1.0.2"
+__version__="1.0.4"
 __VERSION__=__version__
 
 from os import read, write
@@ -464,7 +464,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			last_packet_byte_offset = 0
 
 		#For version<=1.0.8 we have a different reading, 0x03 means data for measurement reading
-		expected_status = WIRED_MESSAGE_STATUS.SUCCESS if version.patch > 8 else WIRED_MESSAGE_STATUS(0x03)
+		expected_status = WIRED_MESSAGE_STATUS.SUCCESS if version.patch > 13 else WIRED_MESSAGE_STATUS(0x03)
 
 		while(len(data_recovery_list) > 0 and retry < _max_retry_for_read):
 			tmp = data_recovery_list.pop()
