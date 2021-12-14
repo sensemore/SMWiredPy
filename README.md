@@ -22,7 +22,7 @@
 ## Requirements
 - pybind11
 - pyserial
-- SMComPy (pip install SMComPy)
+- SMComPy (pip install SMComPy or see [SMComPy](https://github.com/sensemore/SMCom))
 
 ## Example usage
 
