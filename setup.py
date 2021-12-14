@@ -38,9 +38,11 @@ setup(
 	setup_requires=[
 		"setuptools>=42",
 		"wheel",
-	]
+	],
+	
+	keywords="SMCom, sensemore, wired accelerometer,accelerometer sensor, python accelerometer sensor",
+    project_urls={  # Optional
+        'Bug Reports': 'https://github.com/sensemore/SMWiredPy/issues',
+        'Source': 'https://github.com/sensemore/SMWiredPy',
+    },
 )
-
-
-print("Setup py runs:......................................................................")
-print("fbgencer\n\n")
