@@ -8,7 +8,7 @@ import time
 import threading
 import serial
 from os import read, write
-__version__ = "1.0.4"
+__version__ = "1.0.5"
 __VERSION__ = __version__
 
 
@@ -731,9 +731,9 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		if(isinstance(mac, str)):
 			mac_as_byte = [int(x, 16) for x in mac.split(':')]
 
-		receiver_id = self.device_map[mac].user_defined_id
 
 		if inside_firmware_update == False:
+			receiver_id = self.device_map[mac].user_defined_id
 			enter_message = [*mac_as_byte]
 			write_ret = self.write(receiver_id, SMCOM_WIRED_MESSAGES.ENTER_FIRMWARE_UPDATER_MODE.value, enter_message, len(enter_message))
 			if(write_ret != SMComPy.SMCOM_STATUS_SUCCESS):
@@ -746,6 +746,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			print("Device %s entered firmware updater mode" % mac)
 		else:
 			self.__ser.baudrate = WIRED_FIRMWARE_UPDATE_BAUDRATE
+			receiver_id = 12
 			
 		try:
 			print("Device %s is in firmware updater mode" % mac)
@@ -767,9 +768,11 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 				raise Exception("Wired error")
 				return SMComPy.SMCOM_STATUS_FAIL
 
+			print(f"Total # of packets :{no_packets+1}")
 			for packet_no in range(no_packets + 1):
 				retry = 0
 				wired_packet_no = packet_no + 1
+				print(f"Packet {wired_packet_no} of {no_packets+1} is being sent")
 				success = False
 				data_packet = [*tuple(packets[packet_no]), *mac_as_byte, *tuple(wired_packet_no.to_bytes(2, "little"))]
 				while retry < WIRED_FIRMWARE_MAX_RETRY_FOR_ONE_PACKET:
@@ -778,24 +781,30 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 					resp_msg_data = self.__data_queue.get(timeout=timeout).data
 					# print(f"retry: {retry} for packet_no {wired_packet_no}")
 					if write_ret != SMComPy.SMCOM_STATUS_SUCCESS:
-						# print("write error:",write_ret)
+						print("write error:",write_ret)
 						continue
 					read_ret = resp_msg_data[0]
 					packet_mac_return = resp_msg_data[1:7]     # resp data[0] is wired status and 1: is mac address returned wrt the msg
 					ret_packet_no = resp_msg_data[7:]
-					if ret_packet_no[0] != wired_packet_no:
+					ret_packet_no = int.from_bytes(ret_packet_no, "little")
+					if ret_packet_no != wired_packet_no:
+						print("packet no error", ret_packet_no, wired_packet_no)
 						return SMComPy.SMCOM_STATUS_FAIL
 					if mac_as_byte != packet_mac_return or read_ret != WIRED_MESSAGE_STATUS.SUCCESS.value:
-						# print("data error:",read_ret)
+						print("data error:",read_ret)
 						continue
 					success = True
+					print(f"Packet {wired_packet_no} of {no_packets+1} verified successfully")
 					break
 
 				if not success:
+					print(f"Packet {wired_packet_no} of {no_packets+1} failed to be verified")
 					return SMComPy.SMCOM_STATUS_FAIL
 
 			# Data transmission ended successfully
 			print("All firmware data sent")
+
+			##Now scan here if device in firmware mode
 
 			write_ret = self.write(bootloader_id, SMCOM_WIRED_MESSAGES.FIRMWARE_PACKET_END.value, mac_as_byte, len(mac_as_byte))
 			if write_ret != SMComPy.SMCOM_STATUS_SUCCESS:
@@ -808,6 +817,9 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 				return SMComPy.SMCOM_STATUS_FAIL
 			self.__ser.baudrate = WIRED_APPLICATION_BAUDRATE
 			time.sleep(12)
+
+			if inside_firmware_update:
+				self.scan()
 
 			receiver_id = self.device_map[mac].user_defined_id
 			self.__assign_new_id(mac, receiver_id)
@@ -950,6 +962,7 @@ def parser_function():
 	update_parser.add_argument('-p', '--port', type=str, help="port address of the device (linux /dev/ttyUSBX, win32 COMX)", default='/dev/ttyUSB0')
 	update_parser.add_argument('-f', '--file', type=str, help="address of the binary file containing the firmware update", default=None)
 	update_parser.add_argument('-m', '--mac', type=str, help="address of the binary file containing the firmware update", default=None)
+	update_parser.add_argument('--infirmware', help="If device inside firmware update mode", action='store_true', default=False)
 
 	measurement_parser = sub_parsers.add_parser('measure', help='Take measurements directly from command line')
 	measurement_parser.set_defaults(which='measure')
@@ -972,8 +985,13 @@ def parser_function():
 	if(args.which == 'update'):
 		mac = args.mac
 		file = args.file
-		network = SMWired(port=args.port, configure_network=[mac])
-		network.firmware_update(mac, file)
+		if args.infirmware == False:
+			network = SMWired(port=args.port, configure_network=[mac])
+		else:
+			network = SMWired(port=args.port,configure_network=[])
+			
+		network.firmware_update(mac, file,inside_firmware_update=args.infirmware)
+		print("finito")
 	elif(args.which == 'measure'):
 		mac = args.mac
 		freq = args.freq
