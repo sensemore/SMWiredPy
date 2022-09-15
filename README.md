@@ -1,10 +1,10 @@
 # SMWiredPy
 [Sensemore](https://sensemore.io) - Wired vibration sensor Python interface 
 
-![sm](./img/sm.png)
+![sm](https://github.com/sensemore/SMWiredPy/blob/master/img/sm.png?raw=true)
 
 
-![Wired](./img/wired.jpg)
+![Wired](https://github.com/sensemore/SMWiredPy/blob/master/img/wired.jpg?raw=true)
 
 
 ## Installing the library

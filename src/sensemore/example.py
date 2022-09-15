@@ -13,10 +13,10 @@ for device in devices:
 
 #Take measurement from a specific device in the network
 
-mac = 'CA:B8:31:00:00:55'
+mac = 'CA:B8:31:00:00:F3'
 accelerometer_range = "16G"
 sampling_frequency = 6400
-sample_size = 200
+sample_size = 20000
 
 
 measurement_result = wired_network.measure(mac,accelerometer_range,sampling_frequency,sample_size)
