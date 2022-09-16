@@ -302,6 +302,8 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			write_ret = self.__assign_new_id(mac, user_defined_id)
 			if(write_ret != SMComPy.SMCOM_STATUS_SUCCESS):
 				raise Exception("Cannot write to usb port")
+			
+			time.sleep(0.25)
 
 			# This message changes the assigned id, use it with care!
 			write_ret = self.write(user_defined_id, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_INIT.value, [0, 0, 0, 0, 0], 5)
@@ -318,6 +320,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 					continue
 				self.device_map[mac] = Wired(mac, inc_version, user_defined_id)
 				write_ret = self.__assign_new_id(mac, user_defined_id)  # So device is on the entwork, assign it again
+				time.sleep(0.25)
 				return True
 			except queue.Empty:
 				print("No device found ", mac)
@@ -370,6 +373,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			mac_address = [int(x, base=16) for x in mac_address.split(':')]
 		data = [user_id, *mac_address]
 		write_ret = self.write(SMComPy.PUBLIC_ID_4BIT.value, SMCOM_WIRED_MESSAGES.AUTO_ADDRESSING_SET_NEW_ID.value, data, len(data))
+		time.sleep(0.25)
 		return write_ret
 
 	def start_batch_measurement(self, mac, acc, freq, sample_size, notify_measurement_end=True):
@@ -731,14 +735,15 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		if(isinstance(mac, str)):
 			mac_as_byte = [int(x, 16) for x in mac.split(':')]
 
-
 		if inside_firmware_update == False:
 			receiver_id = self.device_map[mac].user_defined_id
+			print("here",receiver_id,mac)
 			enter_message = [*mac_as_byte]
 			write_ret = self.write(receiver_id, SMCOM_WIRED_MESSAGES.ENTER_FIRMWARE_UPDATER_MODE.value, enter_message, len(enter_message))
+			print("Sent enter firmware update message",write_ret)
 			if(write_ret != SMComPy.SMCOM_STATUS_SUCCESS):
 				raise Exception("Cannot write to serial port")
-			time.sleep(0.01)
+			time.sleep(0.2)
 			self.__ser.baudrate = WIRED_FIRMWARE_UPDATE_BAUDRATE
 			enter_mac_return = self.__data_queue.get(timeout=timeout).data
 			if enter_mac_return != mac_as_byte:
@@ -893,7 +898,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		if(len(self.device_map) == 0 and verbose):
 			print("No device found in network")
 			return {}
-
+		time.sleep(1)
 		return self.device_map
 
 	def start_stream_measurement(self, mac, acc, freq, sample_size, timeout=10):

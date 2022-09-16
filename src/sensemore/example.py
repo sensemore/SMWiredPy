@@ -1,6 +1,25 @@
 import SMWiredPy
 
-wired_network = SMWiredPy.SMWired(port = "/dev/ttyUSB0", configure_network='auto', max_device_number=2)
+mac = "7C:DF:A1:C2:29:0C"
+network = SMWiredPy.SMWired(port="/dev/ttyUSB1", configure_network=[mac])
+self = network
+import time
+#time.sleep(1)
+for i in range(100):
+	for device in self.get_available_devices():
+		print("Version of '%s' is %s"%(device,self.get_version(device)))
+exit()
+print(network.get_available_devices())
+if(isinstance(mac, str)):
+	mac_as_byte = [int(x, 16) for x in mac.split(':')]
+# receiver_id = self.device_map[mac].user_defined_id
+receiver_id = 0
+print("here",receiver_id,mac)
+enter_message = [*mac_as_byte]
+write_ret = self.write(receiver_id, SMWiredPy.SMCOM_WIRED_MESSAGES.ENTER_FIRMWARE_UPDATER_MODE.value, enter_message, len(enter_message))
+
+exit()
+wired_network = SMWiredPy.SMWired(port = "/dev/ttyUSB1", configure_network='auto', max_device_number=2)
 #Dump the list of found available devices
 print("Found available devices:",wired_network.get_available_devices())
 
@@ -13,7 +32,7 @@ for device in devices:
 
 #Take measurement from a specific device in the network
 
-mac = 'CA:B8:31:00:00:F3'
+mac = wired_network.get_available_devices()[0]
 accelerometer_range = "16G"
 sampling_frequency = 6400
 sample_size = 20000
