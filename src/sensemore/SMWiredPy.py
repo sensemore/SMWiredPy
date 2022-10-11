@@ -7,7 +7,7 @@ import queue
 import time
 import threading
 import serial
-from os import read, write
+import datetime
 __version__ = "1.0.5"
 __VERSION__ = __version__
 
@@ -20,6 +20,28 @@ PORT = "/dev/ttyUSB0"  # Default port for linux
 WIRED_FIRMWARE_MAX_RETRY_FOR_ONE_PACKET = 5
 debug__ = False
 
+
+_ANSI_COLOR_BLACK    = "\033[1;30m"
+_ANSI_COLOR_RED      = "\033[1;31m"
+_ANSI_COLOR_GREEN    = "\033[1;32m"
+_ANSI_COLOR_YELLOW   = "\033[1;33m"
+_ANSI_COLOR_BLUE     = "\033[1;34m"
+_ANSI_COLOR_MAGENTA  = "\033[1;35m"
+_ANSI_COLOR_CYAN     = "\033[1;36m"
+_ANSI_COLOR_WHITE    = "\033[1;37m"
+_ANSI_COLOR_RESET    = "\033[0m" 
+
+def _log(color, *args,**kwargs):
+	p = kwargs.pop("verbose",True) #If we have 'verbose' key, returns the value. Otherwise returns the given
+	if(p):
+		new_args = (color,*args,_ANSI_COLOR_RESET)
+		print("[%s]"%datetime.datetime.now().strftime("%H:%M:%S"),*new_args,**kwargs)
+
+def smwiredpy_logi(*args,**kwargs):
+	_log(_ANSI_COLOR_WHITE,*args,**kwargs)
+
+def smwiredpy_loge(*args,**kwargs):
+	_log(_ANSI_COLOR_RED,*args,**kwargs)
 
 class SMCom_version():
 	def __init__(self, major, minor, patch):
@@ -178,7 +200,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			self.__ser = serial.Serial(port, baudrate=WIRED_APPLICATION_BAUDRATE)
 		except:
 			self.__ser = None
-			print("Serial port cannot be opened, please check usb is placed correctly!")
+			smwiredpy_loge("Serial port cannot be opened, please check usb is placed correctly!")
 			exit()
 			return
 
@@ -231,7 +253,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			self.__mutex.release()
 			return SMComPy.SMCOM_STATUS_SUCCESS
 		else:
-			print("Got no mutex!")
+			smwiredpy_loge("Got no mutex!")
 			exit()
 
 		return SMComPy.SMCOM_STATUS_TIMEOUT
@@ -242,7 +264,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		"""
 		# print("rx callback:",status)
 		if(status != SMComPy.SMCOM_STATUS_SUCCESS):
-			print("Error occured rx callback!")
+			smwiredpy_loge("Error occured rx callback!")
 			self.__ser.flush()
 			return
 		temp_packet = SMComPyPacket(packet)  # Convert to python so we can have better interface
@@ -316,14 +338,14 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 				inc_mac = data[:-3]
 				inc_version = data[6:]
 				if(inc_mac != mac_as_byte):
-					print("Wrong id assigned to device!, integrity check failed")
+					smwiredpy_loge("Wrong id assigned to device!, integrity check failed")
 					continue
 				self.device_map[mac] = Wired(mac, inc_version, user_defined_id)
 				write_ret = self.__assign_new_id(mac, user_defined_id)  # So device is on the entwork, assign it again
 				time.sleep(0.25)
 				return True
 			except queue.Empty:
-				print("No device found ", mac)
+				smwiredpy_loge("No device found ", mac)
 				return False
 
 				# print("Cannot add device %s, not in the network or connection problem"%mac)
@@ -426,7 +448,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			raise Exception("Cannot write to serial port")
 		# calculate end amount and give also additional time for erasing flash
 		expected_timeout = sample_size/freq + (sample_size*4e-5) + 1
-		print("Expected timeout:", expected_timeout)
+		
 		time.sleep(expected_timeout)
 		return True
 
@@ -483,8 +505,10 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			retry += 1
 			# iterate over all expected packets, even though they could be broken we will try to read
 			no_expected_packet = ceil(tmp_data_len / 240)
+			#print("No expected packet:", no_expected_packet)
 			for _ in range(no_expected_packet):
-				packet = self.__get_message(timeout=3)
+				packet = self.__get_message(timeout=10)
+				#print("Packet:",  WIRED_MESSAGE_STATUS(packet.data[0]))
 				if(packet == None or WIRED_MESSAGE_STATUS(packet.data[0]) != expected_status):
 					# Do not put the same recovery data twice, check it
 					tmp = {}
@@ -492,8 +516,9 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 					tmp["data_len"] = 240 if current_byte_offset != last_packet_byte_offset else last_packet_size
 					data_recovery_list.append(tmp)
 					current_byte_offset += expected_data_len
+					#print("Recovery data:", tmp)
 					if(len(data_recovery_list) >= 30):
-						raise Exception("Lost the connection with the device, too many broken chukns")
+						raise Exception("Lost the connection with the device, too many broken chunks")
 					continue
 				# Got the packet and its status ok!
 				retry = 0
@@ -573,12 +598,12 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			current_byte_offset = len(raw_measurement_data)
 			expected_data_len = min(240, reverse_byte_size)
 			reverse_byte_size -= packet_data_len
-			print("current byte offset:", current_byte_offset)
+			#print("current byte offset:", current_byte_offset)
 
 		retry = 0
 		while(len(data_recovery_list) > 0 and retry < 5):
 			tmp = data_recovery_list[-1]
-			print("Lost packet in recovery list:", tmp)
+			#print("Lost packet in recovery list:", tmp)
 			tmp_byte_offset = tmp["byte_offset"]
 			tmp_data_len = tmp["data_len"]
 			data = [*tuple(tmp_byte_offset.to_bytes(4, "little")), *tuple(tmp_data_len.to_bytes(4, "little"))]
@@ -604,7 +629,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			measurement_data[2][iter] = int.from_bytes(one_packet[4:6], byteorder='little', signed=True)*coef
 			iter += 1
 
-		print("Returning measurement")
+		#print("Returning measurement")
 		return measurement_data
 
 	def measure(self, mac, acc, freq, sample_size, timeout=10):
@@ -714,7 +739,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 
 		return telems
 
-	def firmware_update(self, mac, bin_file_address, timeout=10, inside_firmware_update=False):
+	def firmware_update(self, mac, bin_file_address, timeout=10, inside_firmware_update=False,verbose=False):
 		"""
 		Takes mac_address, address of binary file, and timeout(default 10) and return SMComPy_Status_t
 		or WIRED_MESSAGE_STATUS type as int.
@@ -737,10 +762,10 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 
 		if inside_firmware_update == False:
 			receiver_id = self.device_map[mac].user_defined_id
-			print("here",receiver_id,mac)
+			
 			enter_message = [*mac_as_byte]
 			write_ret = self.write(receiver_id, SMCOM_WIRED_MESSAGES.ENTER_FIRMWARE_UPDATER_MODE.value, enter_message, len(enter_message))
-			print("Sent enter firmware update message",write_ret)
+			smwiredpy_logi("Sent enter firmware update message",write_ret,verbose=verbose)
 			if(write_ret != SMComPy.SMCOM_STATUS_SUCCESS):
 				raise Exception("Cannot write to serial port")
 			time.sleep(0.2)
@@ -748,13 +773,13 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			enter_mac_return = self.__data_queue.get(timeout=timeout).data
 			if enter_mac_return != mac_as_byte:
 				return SMComPy.SMCOM_STATUS_FAIL
-			print("Device %s entered firmware updater mode" % mac)
+			smwiredpy_logi("Device %s entered firmware updater mode" % (mac),verbose=verbose)
 		else:
 			self.__ser.baudrate = WIRED_FIRMWARE_UPDATE_BAUDRATE
 			receiver_id = 12
 			
 		try:
-			print("Device %s is in firmware updater mode" % mac)
+			smwiredpy_logi("Device %s is in firmware updater mode" % (mac),verbose=verbose)
 			bootloader_id = 12  # This is predefined id for bootloader
 			no_packets = len(packets) - 1
 
@@ -777,7 +802,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			for packet_no in range(no_packets + 1):
 				retry = 0
 				wired_packet_no = packet_no + 1
-				print(f"Packet {wired_packet_no} of {no_packets+1} is being sent")
+				smwiredpy_logi(f"Packet {wired_packet_no} of {no_packets+1} is being sent",verbose=verbose)
 				success = False
 				data_packet = [*tuple(packets[packet_no]), *mac_as_byte, *tuple(wired_packet_no.to_bytes(2, "little"))]
 				while retry < WIRED_FIRMWARE_MAX_RETRY_FOR_ONE_PACKET:
@@ -799,15 +824,15 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 						print("data error:",read_ret)
 						continue
 					success = True
-					print(f"Packet {wired_packet_no} of {no_packets+1} verified successfully")
+					smwiredpy_logi(f"Packet {wired_packet_no} of {no_packets+1} verified successfully",verbose=verbose)
 					break
 
 				if not success:
-					print(f"Packet {wired_packet_no} of {no_packets+1} failed to be verified")
+					smwiredpy_logi(f"Packet {wired_packet_no} of {no_packets+1} failed to be verified",verbose=verbose)
 					return SMComPy.SMCOM_STATUS_FAIL
 
 			# Data transmission ended successfully
-			print("All firmware data sent")
+			smwiredpy_logi("All firmware data sent")
 
 			##Now scan here if device in firmware mode
 
@@ -828,7 +853,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 
 			receiver_id = self.device_map[mac].user_defined_id
 			self.__assign_new_id(mac, receiver_id)
-			print("Device '%s' updated to version:" % (mac), self.get_version(mac))
+			smwiredpy_logi("Device '%s' updated to version:" % (mac), self.get_version(mac))
 		except Exception as e:
 			print(e)
 			print("An error occurred while firmware update")
@@ -968,6 +993,7 @@ def parser_function():
 	update_parser.add_argument('-f', '--file', type=str, help="address of the binary file containing the firmware update", default=None)
 	update_parser.add_argument('-m', '--mac', type=str, help="address of the binary file containing the firmware update", default=None)
 	update_parser.add_argument('--infirmware', help="If device inside firmware update mode", action='store_true', default=False)
+	update_parser.add_argument('--verbose', help="Verbosity log", action='store_true', default=False)
 
 	measurement_parser = sub_parsers.add_parser('measure', help='Take measurements directly from command line')
 	measurement_parser.set_defaults(which='measure')
@@ -995,8 +1021,7 @@ def parser_function():
 		else:
 			network = SMWired(port=args.port,configure_network=[])
 			
-		network.firmware_update(mac, file,inside_firmware_update=args.infirmware)
-		print("finito")
+		network.firmware_update(mac, file,inside_firmware_update=args.infirmware,verbose=args.verbose)
 	elif(args.which == 'measure'):
 		mac = args.mac
 		freq = args.freq
