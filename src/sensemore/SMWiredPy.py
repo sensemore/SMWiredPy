@@ -112,6 +112,10 @@ class SMCOM_WIRED_MESSAGES(Enum):
 	GET_LAST_MEASUREMENT_STATUS = 26
 	# Added after v1.0.15(do not include 1.0.15)
 	START_STREAM_MEASUREMENT = 27
+	#Available for WiredPro only
+	START_MAGNETOMETER_BATCH_MEASUREMENT = 28
+	GET_MAGNETOMETER_BATCH_MEASUREMENT_CHUNK = 29
+
 
 
 class WIRED_MESSAGE_STATUS(Enum):
@@ -428,6 +432,36 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 
 		return True
 
+	def start_magnetometer_batch_measurement(self, mac, freq, sample_size, notify_measurement_end=True):
+		if(sample_size <= 0 or sample_size > 100000):
+			raise Exception("Invalid sample size, available range [1,1000000]")
+		#Not configured now
+		# if(str(freq) not in sampling_frequency_dict.keys()):
+		# 	raise Exception("Invalid sampling frequency, available frequencies: {}".format(list(sampling_frequency_dict.keys())))
+
+		# if(str(acc) not in acc_range_dict.keys()):
+		# 	raise Exception("Invalid accelerometer range, available accelerometer ranges: {}".format(list(acc_range_dict.keys())))
+
+		device_id = self.device_map[mac].user_defined_id
+		# Check the dictionaries
+		freq_index = sampling_frequency_dict[str(freq)]
+		# Below are all in bytes except sampling size, so no need to convert we already checked it
+		data = [freq_index, *tuple(sample_size.to_bytes(4, "little")), notify_measurement_end]
+
+		# Check write!
+		write_ret = self.write(device_id, SMCOM_WIRED_MESSAGES.START_MAGNETOMETER_BATCH_MEASUREMENT.value, data, len(data))
+		if write_ret != SMComPy.SMCOM_STATUS_SUCCESS:
+			raise Exception("Cannot write to serial port")
+
+		if(notify_measurement_end):
+			# calculate end amount and give also additional time
+			expected_timeout = 20
+			data_packet = self.__data_queue.get(timeout=expected_timeout)
+			return (data_packet.data[0] == WIRED_MESSAGE_STATUS.SUCCESS.value)
+		return True
+
+
+
 	def __start_sync_batch_measurement(self, acc, freq, sample_size):
 		if(sample_size <= 0 or sample_size > 1000000):
 			raise Exception("Invalid sample size, available range [1,1000000]")
@@ -464,7 +498,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 
 		packet = self.__get_message(timeout=2)
 
-	def read_measurement(self, mac, sample_size, coefficient=0, timeout=10):
+	def read_measurement(self, mac, sample_size, coefficient=0, measurement_type="accelerometer", timeout=10):
 		device_id = self.device_map[mac].user_defined_id
 
 		version = self.device_map[mac].version
@@ -490,6 +524,13 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 		if(last_packet_size == measurement_byte_size):
 			last_packet_byte_offset = 0
 
+		if measurement_type == "accelerometer":
+			message_id = SMCOM_WIRED_MESSAGES.GET_BATCH_MEASUREMENT_CHUNK.value
+		elif measurement_type == "magnetometer":
+			message_id = SMCOM_WIRED_MESSAGES.GET_MAGNETOMETER_BATCH_MEASUREMENT_CHUNK.value
+		else:
+			raise Exception("Invalid measurement type")
+
 		# For version<=1.0.8 we have a different reading, 0x03 means data for measurement reading
 		expected_status = WIRED_MESSAGE_STATUS.SUCCESS if version.patch > 13 else WIRED_MESSAGE_STATUS(0x03)
 
@@ -501,7 +542,7 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			current_byte_offset = tmp_byte_offset
 
 			data = [*tuple(tmp_byte_offset.to_bytes(4, "little")), *tuple(tmp_data_len.to_bytes(4, "little"))]
-			self.write(device_id, SMCOM_WIRED_MESSAGES.GET_BATCH_MEASUREMENT_CHUNK.value, data, len(data))
+			self.write(device_id, message_id, data, len(data))
 			retry += 1
 			# iterate over all expected packets, even though they could be broken we will try to read
 			no_expected_packet = ceil(tmp_data_len / 240)
@@ -650,6 +691,12 @@ class SMWired(SMComPy.SMCOM_PUBLIC):
 			meas[mac] = self.read_measurement(mac, sample_size, coefficient=coef, timeout=timeout)
 
 		return meas
+
+	def measure_magnetometer(self, mac, freq, sample_size, timeout=10):
+		if(self.start_magnetometer_batch_measurement(mac, freq, sample_size, notify_measurement_end=True) == True):
+			return self.read_measurement(mac, sample_size, coefficient=1,measurement_type="magnetometer", timeout=timeout)
+		else:
+			raise Exception("Measurement start failed")
 
 	def get_all_telemetry(self, mac, timeout=60):
 		version = self.device_map[mac].version
